@@ -1,6 +1,5 @@
 /*
-   3APA3A simpliest proxy server
-   (c) 2007-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2007-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -9,7 +8,6 @@
 #include "../../structures.h"
 #include <string.h>
 #include "pcre.h"
-#include "pcreposix.h"
 
 #ifdef  __cplusplus
 extern "C" {
@@ -30,6 +28,7 @@ static struct filter pcre_first_filter = {
 	NULL, NULL,
 	NULL, NULL,
 	NULL, NULL, NULL,
+	NULL, NULL,
 	NULL, NULL
 };
 
@@ -84,10 +83,10 @@ static void pcre_data_free(struct pcre_filter_data *pcrefd){
 	pthread_mutex_lock(&pcre_mutex);
 	pcrefd->users--;
 	if(!pcrefd->users){
-		if(pcrefd->re) pl->myfree(pcrefd->re);
+		if(pcrefd->re) pl->freefunc(pcrefd->re);
 		if(pcrefd->acl) pl->freeacl(pcrefd->acl);
-		if(pcrefd->replace) pl->myfree(pcrefd->replace);
-		pl->myfree(pcrefd);
+		if(pcrefd->replace) pl->freefunc(pcrefd->replace);
+		pl->freefunc(pcrefd);
 	}
 	pthread_mutex_unlock(&pcre_mutex);
 }
@@ -167,7 +166,7 @@ static FILTER_ACTION pcre_filter_buffer(void *fc, struct clientparam *param, uns
 			}
 		}
 
-		tmpbuf =  (*pl->myalloc)(replen);
+		tmpbuf =  pl->mallocfunc(replen);
 		if(!tmpbuf) return CONTINUE;
 		for(target = tmpbuf, replace = pcrefd->replace; *replace; ){
 			if(*replace == '\\' && *(replace +1)){
@@ -188,18 +187,18 @@ static FILTER_ACTION pcre_filter_buffer(void *fc, struct clientparam *param, uns
 		}
 		memcpy(target, *buf_p + ovector[1], *length_p - ovector[1]);
 		if((ovector[0] + replen + 1) > *bufsize_p){
-			newbuf = (*pl->myalloc)(ovector[0] + replen + 1);
+			newbuf = pl->mallocfunc(ovector[0] + replen + 1);
 			if(!newbuf){
-				(*pl->myfree)(tmpbuf);
+				pl->freefunc(tmpbuf);
 				return CONTINUE;
 			}
 			memcpy(newbuf, *buf_p, ovector[0]);
-			(*pl->myfree)(*buf_p);
+			pl->freefunc(*buf_p);
 			*buf_p = (unsigned char *)newbuf;
 			*bufsize_p = ovector[0] + replen + 1;
 		}
 		memcpy(*buf_p + ovector[0], tmpbuf, replen);
-		(*pl->myfree)(tmpbuf);
+		pl->freefunc(tmpbuf);
 		(*buf_p)[ovector[0] + replen] = 0;
 		*length_p = ovector[0] + replen;
 		if(ovector[0] + replen <= offset){
@@ -237,7 +236,7 @@ static int h_pcre(int argc, unsigned char **argv){
 	if(!strncmp((char *)argv[0], "pcre_rewrite", 12)) {
 		int i,j;
 		offset = 5;
-		replace = pl->mystrdup((char *)argv[4]);
+		replace = pl->strdupfunc((char *)argv[4]);
 		if(!replace) return 9;
 		for(i=0, j=0; replace[i]; i++, j++){
 			if(replace[i] == '\\'){
@@ -270,19 +269,19 @@ static int h_pcre(int argc, unsigned char **argv){
 	if(*argv[3] && !(*argv[3] == '*' && !argv[3][1]) ){
 		re = pcre_compile((char *)argv[3], pcre_options, &errptr, &offset, NULL);
 		if(!re) {
-			pl->myfree(acl);
-			if(replace) pl->myfree(replace);
+			pl->freefunc(acl);
+			if(replace) pl->freefunc(replace);
 			return 3;
 		}
 	}
-	flt = pl->myalloc(sizeof(struct pcre_filter_data));
-	newf = pl->myalloc(sizeof(struct filter));
+	flt = pl->mallocfunc(sizeof(struct pcre_filter_data));
+	newf = pl->mallocfunc(sizeof(struct filter));
 	
 	if(!flt || !newf) {
-		pl->myfree(acl);
-		pl->myfree(re);
-		if(replace) pl->myfree(replace);
-		if(flt) pl->myfree(flt);
+		pl->freefunc(acl);
+		pl->freefunc(re);
+		if(replace) pl->freefunc(replace);
+		if(flt) pl->freefunc(flt);
 		return 4;
 	}
 	memset(flt, 0, sizeof(struct pcre_filter_data));
@@ -349,13 +348,9 @@ static struct commands pcre_commandhandlers[] = {
 };
 
 static struct symbol regexp_symbols[] = {
-	{regexp_symbols+1, "regcomp", (void*) regcomp},
-	{regexp_symbols+2, "regexec", (void*) regexec},
-	{regexp_symbols+3, "regerror", (void*) regerror},
-	{regexp_symbols+4, "regfree", (void*) regfree},
-	{regexp_symbols+5, "pcre_compile", (void*) pcre_compile},
-	{regexp_symbols+6, "pcre_exec", (void*) pcre_exec},
-	{NULL, "pcre_free", NULL},
+	{regexp_symbols+1, "pcre_compile", (void*) pcre_compile},
+	{regexp_symbols+2, "pcre_exec", (void*) pcre_exec},
+	{NULL, "pcre_options", (void *)&pcre_options},
 };
 
 #ifdef WATCOM
@@ -371,12 +366,11 @@ PLUGINAPI int PLUGINCALL pcre_plugin (struct pluginlink * pluginlink,
 	pl = pluginlink;
 	pcre_options = 0;
 	if(!pcre_loaded){
-		pcre_malloc = pl->myalloc;
-		pcre_free = pl->myfree;
+		pcre_malloc = pl->mallocfunc;
+		pcre_free = pl->freefunc;
 		pcre_loaded = 1;
 		pthread_mutex_init(&pcre_mutex, NULL);
-		regexp_symbols[6].value = pl->myfree;
-		regexp_symbols[6].next = pl->symbols.next;
+		regexp_symbols[2].next = pl->symbols.next;
 		pl->symbols.next = regexp_symbols;
 		pcre_commandhandlers[3].next = pl->commandhandlers->next;
 		pl->commandhandlers->next = pcre_commandhandlers;
@@ -390,7 +384,7 @@ PLUGINAPI int PLUGINCALL pcre_plugin (struct pluginlink * pluginlink,
 			tmpflt = flt->next;
 			if(flt->data)
 				pcre_data_free((struct pcre_filter_data *)flt->data);
-			pl->myfree(flt);
+			pl->freefunc(flt);
 			if(flt == pcre_last_filter) break;
 		}
 	}

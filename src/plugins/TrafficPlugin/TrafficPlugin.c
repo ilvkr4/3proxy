@@ -74,7 +74,7 @@ static void killtrafcorrect() {
 	while (p) {
 		d = p;
 		p = p->next;
-		pl->myfree(d);
+		free(d);
 	}
 }
 
@@ -94,7 +94,7 @@ int h_trafcorrect(int argc, unsigned char ** argv) {
 			}
 			return 1;
 		}
-		newitem = (struct trafcorrect *)pl->myalloc(sizeof(struct trafcorrect));
+		newitem = (struct trafcorrect *)malloc(sizeof(struct trafcorrect));
 		newitem->next = NULL;
 		newitem->type = MULTIPLAY;
 
@@ -111,8 +111,8 @@ int h_trafcorrect(int argc, unsigned char ** argv) {
    	    newitem->port = atoi((char *)argv[3]);
 		newitem->coeff = atof((char *)argv[4]);
 		/* проверка на корректность ввода */
-		if ((newitem->port>65535) | (newitem->coeff<=0) | (newitem->coeff>100)) {
-			pl->myfree(newitem);
+		if ((newitem->port>65535) || (newitem->coeff<=0) || (newitem->coeff>100)) {
+			free(newitem);
 			if(DBGLEVEL == 1)fprintf(stdout, "Port must be 0<p<65535 and coefficient must be 0<c<100.\n");
 			return 2;
 		}
@@ -130,7 +130,7 @@ int h_trafcorrect(int argc, unsigned char ** argv) {
 			return 1;
 		}
 
-		newitem = (struct trafcorrect *)pl->myalloc(sizeof(struct trafcorrect));	
+		newitem = (struct trafcorrect *)malloc(sizeof(struct trafcorrect));	
 		newitem->next = NULL;
 		newitem->type = IPCORRECT;
 
@@ -146,7 +146,7 @@ int h_trafcorrect(int argc, unsigned char ** argv) {
 		
 		newitem->con_type = TCP;
 		newitem->psize = 52;
-		if ((!strcmp((char *)argv[3], "udp")) & (newitem->p_service != S_PROXY) & (newitem->p_service != S_TCPPM) & (newitem->p_service != S_POP3P)) {
+		if ((!strcmp((char *)argv[3], "udp")) && (newitem->p_service != S_PROXY) && (newitem->p_service != S_TCPPM) && (newitem->p_service != S_POP3P)) {
 			newitem->con_type = UDP;
 			newitem->psize = 48;
 		}
@@ -157,8 +157,8 @@ int h_trafcorrect(int argc, unsigned char ** argv) {
 			newitem->psize = atoi((char *)argv[5]);
 		}
 
-		if ((newitem->port>65535) | (newitem->psize<=0)) {
-			pl->myfree(newitem);
+		if ((newitem->port>65535) || (newitem->psize<=0)) {
+			free(newitem);
 			if(DBGLEVEL == 1)fprintf(stdout, "Port must be 0<p<65535.\n");
 			return 2;
 		}

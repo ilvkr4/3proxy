@@ -1,6 +1,5 @@
 /*
-   3APA3A simpliest proxy server
-   (c) 2007-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2007-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -38,8 +37,10 @@ extern "C" {
 #ifndef _WIN32
 #define WINAPI
 #define fp_size_t size_t
+#define fp_ssize_t ssize_t
 #else
 #define fp_size_t int
+#define fp_ssize_t int
 #endif
 
 static struct pluginlink * pl;
@@ -261,7 +262,7 @@ static void removefps(struct fp_stream * fps){
 }
 
 static int WINAPI fp_connect(SOCKET s, const struct sockaddr *name, fp_size_t namelen){
- return sso._connect(s, name, namelen);
+ return sso._connect(sso.state, s, name, namelen);
 }
 
 void processcallbacks(struct fp_stream *fps, int what, char *msg, int size){
@@ -286,7 +287,7 @@ void processcallbacks(struct fp_stream *fps, int what, char *msg, int size){
 			case  GOT_SMTP_REQ:
 			case  GOT_SMTP_DATA:
 				fps->state = FLUSH_DATA;
-				pl->socksend(fps->fpd.cp->clisock, fp_stringtable[1], (int)strlen(fp_stringtable[1]), pl->conf->timeouts[STRING_S]);
+				pl->socksend(fps->fpd.cp->sostate,fps->fpd.cp->clisock, fp_stringtable[1], (int)strlen(fp_stringtable[1]), pl->conf->timeouts[STRING_S]);
 				fps->state = state;
 				break;
 			case GOT_HTTP_REQUEST:
@@ -298,7 +299,7 @@ void processcallbacks(struct fp_stream *fps, int what, char *msg, int size){
 			case GOT_HTTP_SRVDATA:
 				if(!fps->serversent){
 					fps->state = FLUSH_DATA;
-					pl->socksend(fps->fpd.cp->clisock, fp_stringtable[0], (int)strlen(fp_stringtable[0]), pl->conf->timeouts[STRING_S]);
+					pl->socksend(fps->fpd.cp->sostate, fps->fpd.cp->clisock, fp_stringtable[0], (int)strlen(fp_stringtable[0]), pl->conf->timeouts[STRING_S]);
 					fps->state = state;
 				}
 				break;
@@ -306,15 +307,15 @@ void processcallbacks(struct fp_stream *fps, int what, char *msg, int size){
 			case GOT_FTP_REQ:
 			case GOT_FTP_SRVDATA:
 				fps->state = FLUSH_DATA;
-				pl->socksend(fps->fpd.cp->ctrlsock, fp_stringtable[1], (int)strlen(fp_stringtable[1]), pl->conf->timeouts[STRING_S]);
+				pl->socksend(fps->fpd.cp->sostate, fps->fpd.cp->ctrlsock, fp_stringtable[1], (int)strlen(fp_stringtable[1]), pl->conf->timeouts[STRING_S]);
 				fps->state = state;
 				break;
 			default:
 				break;
 		}
-		if(fps->fpd.cp->remsock != INVALID_SOCKET)sso._closesocket(fps->fpd.cp->remsock);
+		if(fps->fpd.cp->remsock != INVALID_SOCKET)sso._closesocket(sso.state, fps->fpd.cp->remsock);
 		fps->fpd.cp->remsock = INVALID_SOCKET;
-		if(fps->fpd.cp->clisock != INVALID_SOCKET)sso._closesocket(fps->fpd.cp->clisock);
+		if(fps->fpd.cp->clisock != INVALID_SOCKET)sso._closesocket(sso.state, fps->fpd.cp->clisock);
 		fps->fpd.cp->clisock = INVALID_SOCKET;
 	}
 }
@@ -358,7 +359,7 @@ static int copyfdtosock(struct fp_stream * fps, DIRECTION which, long len){
 			if(fps->serversent >= fps->srvhdrwritten){
 				sprintf(fps->buf, "%lx\r\n", len);
 				sendchunk = (int)strlen(fps->buf);
-				if(pl->socksend(fps->fpd.cp->clisock, fps->buf, sendchunk, pl->conf->timeouts[STRING_S]) != sendchunk){
+				if(pl->socksend(fps->fpd.cp->sostate, fps->fpd.cp->clisock, fps->buf, sendchunk, pl->conf->timeouts[STRING_S]) != sendchunk){
 					return -4;
 				}
 			} 
@@ -397,20 +398,20 @@ static int copyfdtosock(struct fp_stream * fps, DIRECTION which, long len){
 #endif
 			return -3;
 		}
-		if(pl->socksend(sock, fps->buf, res, pl->conf->timeouts[STRING_S]) != res) {
+		if(pl->socksend(fps->fpd.cp->sostate, sock, fps->buf, res, pl->conf->timeouts[STRING_S]) != res) {
 			return -4;
 		}
 		len -= res;
 	}
 	if(sendchunk){
-		if(pl->socksend(sock, "\r\n", 2, pl->conf->timeouts[STRING_S]) != 2)
+		if(pl->socksend(fps->fpd.cp->sostate, sock, "\r\n", 2, pl->conf->timeouts[STRING_S]) != 2)
 			return -4;
 	}
 	fps->state = state;
 	return 0;
 }
 
-static int WINAPI fp_poll(struct pollfd *fds, unsigned int nfds, int timeout){
+static int WINAPI fp_poll(void *state, struct pollfd *fds, unsigned int nfds, int timeout){
  struct fp_stream *fps = NULL;
  int res;
  unsigned i;
@@ -455,10 +456,10 @@ static int WINAPI fp_poll(struct pollfd *fds, unsigned int nfds, int timeout){
 	}
 	
  }
- return sso._poll(fds, nfds, timeout);
+ return sso._poll(sso.state, fds, nfds, timeout);
 }
 
-static int WINAPI fp_send(SOCKET s, const char *msg, fp_size_t len, int flags){
+static fp_ssize_t WINAPI fp_send(void *state, SOCKET s, const char *msg, fp_size_t len, int flags){
  struct fp_stream *fps = NULL;
  int res;
  res = searchsocket(s, &fps);
@@ -473,7 +474,7 @@ static int WINAPI fp_send(SOCKET s, const char *msg, fp_size_t len, int flags){
 		}
 		closefiles(fps);
 		fps->state = 0;
-		return sso._send(s, msg, len, flags);
+		return sso._send(sso.state, s, msg, len, flags);
 	}
 	if((((fps->what & FP_CLIHEADER) && (fps->state == GOT_HTTP_REQUEST || fps->state == GOT_HTTP_CLI_HDR2)) || ((fps->what & FP_CLIDATA) && fps->state == GOT_HTTP_CLIDATA))){
 #ifdef _WIN32
@@ -503,7 +504,7 @@ static int WINAPI fp_send(SOCKET s, const char *msg, fp_size_t len, int flags){
 
 			if(c == '\r' || c == '\n') continue;
 			if((c<'0'|| c>'9') && (c<'A' || c>'F') && (c<'a' || c>'f')) {
-				return sso._send(s, msg, len, flags);
+				return sso._send(sso.state, s, msg, len, flags);
 			}
 			if(c != '0') hasnonzero = 1;
 		}
@@ -518,7 +519,7 @@ static int WINAPI fp_send(SOCKET s, const char *msg, fp_size_t len, int flags){
 			}
 			closefiles(fps);
 			fps->state = 0;
-			return sso._send(s, msg, len, flags);
+			return sso._send(sso.state, s, msg, len, flags);
 		}
 		return len;
 	}
@@ -540,9 +541,9 @@ static int WINAPI fp_send(SOCKET s, const char *msg, fp_size_t len, int flags){
 		return res;
 	}
  }
- return sso._send(s, msg, len, flags);
+ return sso._send(sso.state, s, msg, len, flags);
 }
-static int WINAPI fp_sendto(SOCKET s, const void *msg, int len, int flags, const struct sockaddr *to, fp_size_t tolen){
+static fp_ssize_t WINAPI fp_sendto(void *state, SOCKET s, const void *msg, int len, int flags, const struct sockaddr *to, fp_size_t tolen){
  struct fp_stream *fps = NULL;
  int res;
  res = searchsocket(s, &fps);
@@ -577,7 +578,7 @@ static int WINAPI fp_sendto(SOCKET s, const void *msg, int len, int flags, const
 	case GOT_FTP_CLIDATA:
 	case GOT_FTP_SRVDATA:
 	case GOT_HTTP_CLIDATA:
-		if((!fps->what & FP_CLIDATA)) break;
+		if(!(fps->what & FP_CLIDATA)) break;
 #ifdef _WIN32
 		if(SetFilePointer(fps->fpd.h_cli, fps->clientwritten + fps->clihdrwritten, 0, FILE_BEGIN) != (fps->clientwritten + fps->clihdrwritten)){
 			return -1;
@@ -658,15 +659,15 @@ static int WINAPI fp_sendto(SOCKET s, const void *msg, int len, int flags, const
 		return res;
 	}
  }
- return sso._sendto(s, msg, len, flags, to, tolen);
+ return sso._sendto(sso.state, s, msg, len, flags, to, tolen);
 }
-static int WINAPI fp_recv(SOCKET s, void *buf, fp_size_t len, int flags){
- return sso._recv(s, buf, len, flags);
+static fp_ssize_t WINAPI fp_recv(void *state, SOCKET s, void *buf, fp_size_t len, int flags){
+ return sso._recv(sso.state, s, buf, len, flags);
 }
-static int WINAPI fp_recvfrom(SOCKET s, void * buf, fp_size_t len, int flags, struct sockaddr * from, fp_size_t * fromlen){
- return sso._recvfrom(s, buf, len, flags, from, fromlen);
+static fp_ssize_t WINAPI fp_recvfrom(void *state, SOCKET s, void * buf, fp_size_t len, int flags, struct sockaddr * from, fp_size_t * fromlen){
+ return sso._recvfrom(sso.state, s, buf, len, flags, from, fromlen);
 }
-static int WINAPI fp_shutdown(SOCKET s, int how){
+static int WINAPI fp_shutdown(void *state, SOCKET s, int how){
  struct fp_stream *fps = NULL;
 
  int res;
@@ -690,10 +691,10 @@ static int WINAPI fp_shutdown(SOCKET s, int how){
 	}
  }
  
- return sso._shutdown(s, how);
+ return sso._shutdown(sso.state, s, how);
 }
-static int WINAPI fp_closesocket(SOCKET s){
- return sso._closesocket(s);
+static int WINAPI fp_closesocket(void *state, SOCKET s){
+ return sso._closesocket(sso.state, s);
 }
 
 

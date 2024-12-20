@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -12,6 +12,11 @@
 #ifndef NOPLUGINS
 #include <dlfcn.h>
 #endif
+#else
+#ifdef WITH_SSL
+#include <openssl/applink.c>
+#endif
+
 #endif
 
 #ifndef DEFAULTCONFIG
@@ -271,16 +276,8 @@ void cyclestep(void){
 	}
 	if(conf.logname) {
 		if(timechanged(conf.logtime, conf.time, conf.logtype)) {
-			FILE *fp;
-			fp = fopen((char *)dologname (tmpbuf, conf.logname, NULL, conf.logtype, conf.time), "a");
-			if (fp) {
-				pthread_mutex_lock(&log_mutex);
-				fclose(conf.stdlog);
-				conf.stdlog = fp;
-				pthread_mutex_unlock(&log_mutex);
-			}
-			fseek(stdout, 0L, SEEK_END);
-			usleep(SLEEPTIME);
+			if(conf.stdlog) conf.stdlog = freopen((char *)dologname (tmpbuf, conf.logname, NULL, conf.logtype, conf.time), "a", conf.stdlog);
+			else conf.stdlog = fopen((char *)dologname (tmpbuf, conf.logname, NULL, conf.logtype, conf.time), "a");
 			conf.logtime = conf.time;
 			if(conf.logtype != NONE && conf.rotate) {
 				int t;
@@ -508,6 +505,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int 
 #else
 	fprintf(stderr,	"\n if conffile is missing, configuration is expected from stdin\n");
 #endif
+	fprintf(stderr, "available socket options:\n\t%s\n", printopts("\n\t"));
 	fprintf(stderr, "\n%s %s\n%s\n", conf.stringtable[2], conf.stringtable[3], copyright);
 
 	return 1;
@@ -515,10 +513,14 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int 
 
   pthread_mutex_init(&config_mutex, NULL);
   pthread_mutex_init(&bandlim_mutex, NULL);
+  pthread_mutex_init(&connlim_mutex, NULL);
   pthread_mutex_init(&hash_mutex, NULL);
   pthread_mutex_init(&tc_mutex, NULL);
   pthread_mutex_init(&pwl_mutex, NULL);
   pthread_mutex_init(&log_mutex, NULL);
+#ifndef NORADIUS
+  pthread_mutex_init(&rad_mutex, NULL);
+#endif
 
   freeconf(&conf);
   res = readconfig(fp);

@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -9,7 +9,7 @@
 #include "proxy.h"
 
 
-int clientnegotiate(struct chain * redir, struct clientparam * param, struct sockaddr * addr){
+int clientnegotiate(struct chain * redir, struct clientparam * param, struct sockaddr * addr, unsigned char * hostname){
 	unsigned char *buf;
 	unsigned char *username;
 	int res;
@@ -22,6 +22,7 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 	if (!param->srvbufsize){
 		param->srvbufsize = SRVBUFSIZE;
 		param->srvbuf = myalloc(param->srvbufsize);
+		if(!param->srvbuf) return 21;
 	}
 	buf = param->srvbuf;
 	username = buf + 2048;
@@ -40,11 +41,11 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 		case R_CONNECTP:
 		{
 			len = sprintf((char *)buf, "CONNECT ");
-			if(redir->type == R_CONNECTP && param->hostname) {
+			if(redir->type == R_CONNECTP && hostname) {
 				char * needreplace;
-				needreplace = strchr((char *)param->hostname, ':');
+				needreplace = strchr((char *)hostname, ':');
 				if(needreplace) buf[len++] = '[';
-				len += sprintf((char *)buf + len, "%.256s", (char *)param->hostname);
+				len += sprintf((char *)buf + len, "%.256s", (char *)hostname);
 				if(needreplace) buf[len++] = ']';
 			}
 			else {
@@ -53,16 +54,16 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 				if(*SAFAMILY(addr) == AF_INET6) buf[len++] = ']';
 			}
 			len += sprintf((char *)buf + len,
-				":%hu HTTP/1.0\r\nProxy-Connection: keep-alive\r\n", ntohs(*SAPORT(addr)));
+				":%hu HTTP/1.0\r\nConnection: keep-alive\r\n", ntohs(*SAPORT(addr)));
 			if(user){
-				len += sprintf((char *)buf + len, "Proxy-authorization: basic ");
+				len += sprintf((char *)buf + len, "Proxy-Authorization: Basic ");
 				sprintf((char *)username, "%.128s:%.128s", user, pass?pass:(unsigned char *)"");
 				en64(username, buf+len, (int)strlen((char *)username));
 				len = (int)strlen((char *)buf);
 				len += sprintf((char *)buf + len, "\r\n");
 			}
 			len += sprintf((char *)buf + len, "\r\n");
-			if(socksend(param->remsock, buf, len, conf.timeouts[CHAIN_TO]) != (int)strlen((char *)buf))
+			if(socksend(param, param->remsock, buf, len, conf.timeouts[CHAIN_TO]) != (int)strlen((char *)buf))
 				return 31;
 			param->statssrv64+=len;
 			param->nwrites++;
@@ -82,7 +83,7 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 			buf[0] = 4;
 			buf[1] = 1;
 			memcpy(buf+2, SAPORT(addr), 2);
-			if(redir->type == R_SOCKS4P && param->hostname) {
+			if(redir->type == R_SOCKS4P && hostname) {
 				buf[4] = buf[5] = buf[6] = 0;
 				buf[7] = 3;
 			}
@@ -91,15 +92,15 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 			len = (int)strlen((char *)user) + 1;
 			memcpy(buf+8, user, len);
 			len += 8;
-			if(redir->type == R_SOCKS4P && param->hostname) {
+			if(redir->type == R_SOCKS4P && hostname) {
 				int hostnamelen;
 
-				hostnamelen = (int)strlen((char *)param->hostname) + 1;
+				hostnamelen = (int)strlen((char *)hostname) + 1;
 				if(hostnamelen > 255) hostnamelen = 255;
-				memcpy(buf+len, param->hostname, hostnamelen);
+				memcpy(buf+len, hostname, hostnamelen);
 				len += hostnamelen;
 			}
-			if(socksend(param->remsock, buf, len, conf.timeouts[CHAIN_TO]) < len){
+			if(socksend(param, param->remsock, buf, len, conf.timeouts[CHAIN_TO]) < len){
 				return 41;
 			}
 			param->statssrv64+=len;
@@ -122,7 +123,7 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 			buf[0] = 5;
 			buf[1] = 1;
 			buf[2] = user? 2 : 0;
-			if(socksend(param->remsock, buf, 3, conf.timeouts[CHAIN_TO]) != 3){
+			if(socksend(param, param->remsock, buf, 3, conf.timeouts[CHAIN_TO]) != 3){
 				return 51;
 			}
 			param->statssrv64+=len;
@@ -144,7 +145,7 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 				buf[inbuf] = pass?(unsigned char)strlen((char *)pass):0;
 				if(pass)memcpy(buf+inbuf+1, pass, buf[inbuf]);
 				inbuf += buf[inbuf] + 1;
-				if(socksend(param->remsock, buf, inbuf, conf.timeouts[CHAIN_TO]) != inbuf){
+				if(socksend(param, param->remsock, buf, inbuf, conf.timeouts[CHAIN_TO]) != inbuf){
 					return 51;
 				}
 				param->statssrv64+=inbuf;
@@ -159,12 +160,12 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 			buf[0] = 5;
 			buf[1] = 1;
 			buf[2] = 0;
-			if(redir->type == R_SOCKS5P && param->hostname) {
+			if(redir->type == R_SOCKS5P && hostname) {
 				buf[3] = 3;
-				len = (int)strlen((char *)param->hostname);
+				len = (int)strlen((char *)hostname);
 				if(len > 255) len = 255;
 				buf[4] = len;
-				memcpy(buf + 5, param->hostname, len);
+				memcpy(buf + 5, hostname, len);
 				len += 5;
 			}
 			else {
@@ -175,7 +176,7 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 			}
 			memcpy(buf+len, SAPORT(addr), 2);
 			len += 2;
-			if(socksend(param->remsock, buf, len, conf.timeouts[CHAIN_TO]) != len){
+			if(socksend(param, param->remsock, buf, len, conf.timeouts[CHAIN_TO]) != len){
 				return 51;
 			}
 			param->statssrv64+=len;
@@ -195,9 +196,10 @@ int clientnegotiate(struct chain * redir, struct clientparam * param, struct soc
 				    break;
 			    return 59;
 			case 3:
-			    if (sockgetlinebuf(param, SERVER, buf, 256, 0, conf.timeouts[CHAIN_TO]) > 1)
-				    break;
-			    return 59;
+			    if (sockgetlinebuf(param, SERVER, buf, 1, EOF, conf.timeouts[CHAIN_TO]) != 1) return 59;
+			    len = (unsigned char)buf[0];
+			    if (sockgetlinebuf(param, SERVER, buf, len, EOF, conf.timeouts[CHAIN_TO]) != len) return 59;
+			    break;
 			case 4:
 			    if (sockgetlinebuf(param, SERVER, buf, 18, EOF, conf.timeouts[CHAIN_TO]) == 18)
 				    break;
@@ -252,6 +254,26 @@ int handleredirect(struct clientparam * param, struct ace * acentry){
 		if(!connected){
 			if(cur->type == R_EXTIP){
 				param->sinsl = cur->addr;
+				if(SAISNULL(&param->sinsl))param->sinsl = param->sincr;
+#ifndef NOIPV6
+				else if(cur->cidr && *SAFAMILY(&param->sinsl) == AF_INET6){
+					uint16_t c;
+					int i;
+
+					for(i = 0; i < 8; i++){
+						if(i==4)myrand(&param->sincr, sizeof(param->sincr));
+						else if(i==6) myrand(&param->req, sizeof(param->req));
+
+						if(i*16 >= cur->cidr) ((uint16_t *)SAADDR(&param->sinsl))[i] |= rand();
+						else if ((i+1)*16 >  cur->cidr){
+							c = rand();
+							c >>= (cur->cidr - (i*16));
+							c |= ntohs(((uint16_t *)SAADDR(&param->sinsl))[i]);
+							((uint16_t *)SAADDR(&param->sinsl))[i] = htons(c);
+						}
+					}
+				}
+#endif
 				if(cur->next)continue;
 				return 0;
 			}
@@ -277,11 +299,11 @@ int handleredirect(struct clientparam * param, struct ace * acentry){
 					case R_ADMIN:
 						param->redirectfunc = adminchild;
 						break;
-					case R_ICQ:
-						param->redirectfunc = icqprchild;
-						break;
 					case R_SMTP:
 						param->redirectfunc = smtppchild;
+						break;
+					case R_TLS:
+						param->redirectfunc = tlsprchild;
 						break;
 					default:
 						param->redirectfunc = proxychild;
@@ -300,11 +322,11 @@ int handleredirect(struct clientparam * param, struct ace * acentry){
 			}
 
 			if((res = alwaysauth(param))){
-				return (res == 10)? res : 60+res;
+				return (res >= 10)? res : 60+res;
 			}
 		}
 		else {
-			res = (redir)?clientnegotiate(redir, param, (struct sockaddr *)&cur->addr):0;
+			res = (redir)?clientnegotiate(redir, param, (struct sockaddr *)&cur->addr, cur->exthost):0;
 			if(res) return res;
 		}
 		redir = cur;
@@ -327,7 +349,7 @@ int handleredirect(struct clientparam * param, struct ace * acentry){
 	}
 
 	if(!connected || !redir) return 0;
-	return clientnegotiate(redir, param, (struct sockaddr *)&param->req);
+	return clientnegotiate(redir, param, (struct sockaddr *)&param->req, param->hostname);
 }
 
 int IPInentry(struct sockaddr *sa, struct iplist *ipentry){
@@ -367,7 +389,7 @@ int ACLmatches(struct ace* acentry, struct clientparam * param){
 		}
 	 if(!ipentry) return 0;
 	}
-	if((acentry->dst && !SAISNULL(&param->req)) || (acentry->dstnames && param->hostname)) {
+	if((acentry->dst && (!SAISNULL(&param->req) || param->operation == UDPASSOC || param->operation==BIND)) || (acentry->dstnames && param->hostname)) {
 	 for(ipentry = acentry->dst; ipentry; ipentry = ipentry->next)
 		if(IPInentry((struct sockaddr *)&param->req, ipentry)) {
 			break;
@@ -379,21 +401,34 @@ int ACLmatches(struct ace* acentry, struct clientparam * param){
 			}
 			while(i > 5 && param->hostname[i-1] == '.') param->hostname[i-1] = 0;
 			for(hstentry = acentry->dstnames; hstentry; hstentry = hstentry->next){
+				int lname, lhost;
 				switch(hstentry->matchtype){
 					case 0:
+#ifndef _WIN32
+					if(strcasestr((char *)param->hostname, (char *)hstentry->name)) match = 1;
+#else
 					if(strstr((char *)param->hostname, (char *)hstentry->name)) match = 1;
+#endif
 					break;
 
 					case 1:
-					if(strstr((char *)param->hostname, (char *)hstentry->name) == (char *)param->hostname) match = 1;
+					if(!strncasecmp((char *)param->hostname, (char *)hstentry->name, strlen((char *)hstentry->name)))
+						match = 1;
 					break;
 
 					case 2:
-					if(strstr((char *)param->hostname, (char *)hstentry->name) == (char *)(param->hostname + i - (strlen((char *)hstentry->name)))) match = 1;
+					lname = strlen((char *)hstentry->name);
+					lhost = strlen((char *)param->hostname);
+					if(lhost > lname){
+						if(!strncasecmp((char *)param->hostname + (lhost - lname),
+							(char *)hstentry->name,
+							lname))
+								match = 1;
+					}
 					break;
 
 					default:
-					if(!strcmp((char *)param->hostname, (char *)hstentry->name)) match = 1;
+					if(!strcasecmp((char *)param->hostname, (char *)hstentry->name)) match = 1;
 					break;
         			}
 				if(match) break;
@@ -402,7 +437,7 @@ int ACLmatches(struct ace* acentry, struct clientparam * param){
 	 }
 	 if(!ipentry && !hstentry) return 0;
 	}
-	if(acentry->ports && *SAPORT(&param->req)) {
+	if(acentry->ports && (*SAPORT(&param->req) || param->operation == UDPASSOC || param->operation == BIND)) {
 	 for (portentry = acentry->ports; portentry; portentry = portentry->next)
 		if(ntohs(*SAPORT(&param->req)) >= portentry->startport &&
 			   ntohs(*SAPORT(&param->req)) <= portentry->endport) {
@@ -437,9 +472,69 @@ int ACLmatches(struct ace* acentry, struct clientparam * param){
 	return 1;
 }
 
+
+int startconnlims (struct clientparam *param){
+	struct connlim * ce;
+	time_t delta;
+	uint64_t rating;
+	int ret = 0;
+
+	param->connlim = 1;
+	pthread_mutex_lock(&connlim_mutex);
+	for(ce = conf.connlimiter; ce; ce = ce->next) {
+		if(ACLmatches(ce->ace, param)){
+			if(ce->ace->action == NOCONNLIM)break;
+			if(!ce->period){
+				if(ce->rate <= ce->rating) {
+					ret = 1;
+					break;
+				}
+				ce->rating++;
+				continue;
+			}
+			delta = conf.time - ce->basetime;
+			if(ce->period <= delta || ce->basetime > conf.time){
+				ce->basetime = conf.time;
+				ce->rating = 0x100000;
+				continue;
+			}
+			rating = delta? ((ce->rating * (ce->period - delta)) / ce->period) + 0x100000 : ce->rating + 0x100000;
+			if (rating > (ce->rate<<20)) {
+				ret = 2;
+				break;
+			}
+			ce->rating = rating;
+			ce->basetime = conf.time;
+		}
+	}
+	pthread_mutex_unlock(&connlim_mutex);
+	return ret;
+}
+
+void stopconnlims (struct clientparam *param){
+	struct connlim * ce;
+
+	pthread_mutex_lock(&connlim_mutex);
+	for(ce = conf.connlimiter; ce; ce = ce->next) {
+		if(ACLmatches(ce->ace, param)){
+			if(ce->ace->action == NOCONNLIM)break;
+			if(!ce->period && ce->rating){
+				ce->rating--;
+				continue;
+			}
+		}
+	}
+	pthread_mutex_unlock(&connlim_mutex);
+}
+
 static void initbandlims (struct clientparam *param){
 	struct bandlim * be;
 	int i;
+
+	param->bandlimfunc = NULL;
+	param->bandlims[0] = NULL;
+	param->bandlimsout[0] = NULL;
+	if(!conf.bandlimfunc || (!conf.bandlimiter && !conf.bandlimiterout)) return;
 	for(i=0, be = conf.bandlimiter; be && i<MAXBANDLIMS; be = be->next) {
 		if(ACLmatches(be->ace, param)){
 			if(be->ace->action == NOBANDLIM) {
@@ -460,11 +555,12 @@ static void initbandlims (struct clientparam *param){
 		}
 	}
 	if(i<MAXBANDLIMS)param->bandlimsout[i] = NULL;
+	param->bandlimver = conf.bandlimver;
 }
 
 unsigned bandlimitfunc(struct clientparam *param, unsigned nbytesin, unsigned nbytesout){
 	unsigned sleeptime = 0, nsleeptime;
-	unsigned long sec;
+	time_t sec;
 	unsigned msec;
 	unsigned now;
 	int i;
@@ -485,14 +581,9 @@ unsigned bandlimitfunc(struct clientparam *param, unsigned nbytesin, unsigned nb
 	
 	if(!nbytesin && !nbytesout) return 0;
 	pthread_mutex_lock(&bandlim_mutex);
-	if(param->paused != conf.paused && param->bandlimver != conf.paused){
-		if(!conf.bandlimfunc){
-			param->bandlimfunc = NULL;
-			pthread_mutex_unlock(&bandlim_mutex);
-			return 0;
-		}
+	if(param->bandlimver != conf.bandlimver){
 		initbandlims(param);
-		param->bandlimver = conf.paused;
+		param->bandlimver = conf.bandlimver;
 	}
 	for(i=0; nbytesin&& i<MAXBANDLIMS && param->bandlims[i]; i++){
 		if( !param->bandlims[i]->basetime || 
@@ -504,12 +595,12 @@ unsigned bandlimitfunc(struct clientparam *param, unsigned nbytesin, unsigned nb
 			param->bandlims[i]->nexttime = 0;
 			continue;
 		}
-		now = ((sec - param->bandlims[i]->basetime) * 1000000) + msec;
+		now = (unsigned)((sec - param->bandlims[i]->basetime) * 1000000) + msec;
 		nsleeptime = (param->bandlims[i]->nexttime > now)?
 			param->bandlims[i]->nexttime - now : 0;
 		sleeptime = (nsleeptime > sleeptime)? nsleeptime : sleeptime;
 		param->bandlims[i]->basetime = sec;
-		param->bandlims[i]->nexttime = msec + nsleeptime + ((param->bandlims[i]->rate > 1000000)? ((nbytesin/32)*(256000000/param->bandlims[i]->rate)) : (nbytesin * (8000000/param->bandlims[i]->rate)));
+		param->bandlims[i]->nexttime = msec + nsleeptime + ((nbytesin > 512)? ((nbytesin+32)/64)*(((64*8*1000000)/param->bandlims[i]->rate)) : ((nbytesin+1) * (8*1000000))/param->bandlims[i]->rate);
 	}
 	for(i=0; nbytesout && i<MAXBANDLIMS && param->bandlimsout[i]; i++){
 		if( !param->bandlimsout[i]->basetime || 
@@ -521,12 +612,12 @@ unsigned bandlimitfunc(struct clientparam *param, unsigned nbytesin, unsigned nb
 			param->bandlimsout[i]->nexttime = 0;
 			continue;
 		}
-		now = ((sec - param->bandlimsout[i]->basetime) * 1000000) + msec;
+		now = (unsigned)((sec - param->bandlimsout[i]->basetime) * 1000000) + msec;
 		nsleeptime = (param->bandlimsout[i]->nexttime > now)?
 			param->bandlimsout[i]->nexttime - now : 0;
 		sleeptime = (nsleeptime > sleeptime)? nsleeptime : sleeptime;
 		param->bandlimsout[i]->basetime = sec;
-		param->bandlimsout[i]->nexttime = msec + nsleeptime + ((param->bandlimsout[i]->rate > 1000000)? ((nbytesout/32)*(256000000/param->bandlimsout[i]->rate)) : (nbytesout * (8000000/param->bandlimsout[i]->rate)));
+		param->bandlimsout[i]->nexttime = msec + nsleeptime + ((nbytesout > 512)? ((nbytesout+32)/64)*((64*8*1000000)/param->bandlimsout[i]->rate) : ((nbytesout+1)* (8*1000000))/param->bandlimsout[i]->rate);
 	}
 	pthread_mutex_unlock(&bandlim_mutex);
 	return sleeptime/1000;
@@ -539,27 +630,28 @@ void trafcountfunc(struct clientparam *param){
 	pthread_mutex_lock(&tc_mutex);
 	for(tc = conf.trafcounter; tc; tc = tc->next) {
 		if(ACLmatches(tc->ace, param)){
-			time_t t;
-			if(tc->ace->action == NOCOUNTIN) break;
-			if(tc->ace->action != COUNTIN) {
+
+			if(tc->ace->action == NOCOUNTIN) {
+				countout = 1;
+				break;
+			}
+			if(tc->ace->action == NOCOUNTALL) break;
+			if(tc->ace->action != COUNTIN && tc->ace->action != COUNTALL) {
 				countout = 1;
 				continue;
 			}
 			tc->traf64 += param->statssrv64;
-			time(&t);
-			tc->updated = t;
+			tc->updated = conf.time;
 		}
 	}
 	if(countout) for(tc = conf.trafcounter; tc; tc = tc->next) {
 		if(ACLmatches(tc->ace, param)){
-			time_t t;
-			if(tc->ace->action == NOCOUNTOUT) break;
-			if(tc->ace->action != COUNTOUT) {
+			if(tc->ace->action == NOCOUNTOUT || tc->ace->action == NOCOUNTALL) break;
+			if(tc->ace->action != COUNTOUT && tc->ace->action != COUNTALL ) {
 				continue;
 			}
 			tc->traf64 += param->statscli64;
-			time(&t);
-			tc->updated = t;
+			tc->updated = conf.time;
 		}
 	}
 
@@ -571,37 +663,55 @@ int alwaysauth(struct clientparam * param){
 	struct trafcount * tc;
 	int countout = 0;
 
+
+	if(conf.connlimiter && !param->connlim  && startconnlims(param)) return 10;
 	res = doconnect(param);
 	if(!res){
-		initbandlims(param);
-		for(tc = conf.trafcounter; tc; tc = tc->next) {
-			if(tc->disabled) continue;
-			if(ACLmatches(tc->ace, param)){
-				if(tc->ace->action == NOCOUNTIN) break;
-				if(tc->ace->action != COUNTIN) {
-					countout = 1;
-					continue;
-				}
-			
-				if(tc->traflim64 <= tc->traf64) return 10;
-				param->trafcountfunc = conf.trafcountfunc;
-				param->maxtrafin64 = tc->traflim64 - tc->traf64; 
-			}
-		}
-		if(countout)for(tc = conf.trafcounter; tc; tc = tc->next) {
-			if(tc->disabled) continue;
-			if(ACLmatches(tc->ace, param)){
-				if(tc->ace->action == NOCOUNTOUT) break;
-				if(tc->ace->action != COUNTOUT) {
-					continue;
-				}
-			
-				if(tc->traflim64 <= tc->traf64) return 10;
-				param->trafcountfunc = conf.trafcountfunc;
-				param->maxtrafout64 = tc->traflim64 - tc->traf64; 
-			}
+		if(conf.bandlimfunc && (conf.bandlimiter||conf.bandlimiterout)){
+			pthread_mutex_lock(&bandlim_mutex);
+			initbandlims(param);
+			pthread_mutex_unlock(&bandlim_mutex);
 		}
 
+		if(conf.trafcountfunc && conf.trafcounter) {
+			pthread_mutex_lock(&tc_mutex);
+			for(tc = conf.trafcounter; tc; tc = tc->next) {
+				if(tc->disabled) continue;
+				if(ACLmatches(tc->ace, param)){
+					if(tc->ace->action == NOCOUNTIN) {
+						countout = 1;
+						break;
+					}
+					if(tc->ace->action == NOCOUNTALL) break;
+					if(tc->ace->action != COUNTIN) {
+						countout = 1;
+						if(tc->ace->action != COUNTALL) continue;
+					}
+					if(tc->traflim64 <= tc->traf64) {
+					    pthread_mutex_unlock(&tc_mutex);
+					    return 10;
+					}
+					param->trafcountfunc = conf.trafcountfunc;
+					param->maxtrafin64 = tc->traflim64 - tc->traf64; 
+				}
+			}
+			if(countout)for(tc = conf.trafcounter; tc; tc = tc->next) {
+				if(tc->disabled) continue;
+				if(ACLmatches(tc->ace, param)){
+					if(tc->ace->action == NOCOUNTOUT || tc->ace->action == NOCOUNTALL) break;
+					if(tc->ace->action != COUNTOUT && tc->ace->action !=  COUNTALL) {
+						continue;
+					}
+					if(tc->traflim64 <= tc->traf64) {
+					    pthread_mutex_unlock(&tc_mutex);
+					    return 10;
+					}
+					param->trafcountfunc = conf.trafcountfunc;
+					param->maxtrafout64 = tc->traflim64 - tc->traf64; 
+				}
+			}
+			pthread_mutex_unlock(&tc_mutex);
+		}
 	}
 	return res;
 }
@@ -610,7 +720,7 @@ int checkACL(struct clientparam * param){
 	struct ace* acentry;
 
 	if(!param->srv->acl) {
-		return alwaysauth(param);
+		return 0;
 	}
 	for(acentry = param->srv->acl; acentry; acentry = acentry->next) {
 		if(ACLmatches(acentry, param)) {
@@ -618,6 +728,7 @@ int checkACL(struct clientparam * param){
 			param->weight = acentry->weight;
 			if(acentry->action == 2) {
 				struct ace dup;
+				int res=60,i=0;
 
 				if(param->operation < 256 && !(param->operation & CONNECT)){
 					continue;
@@ -625,8 +736,17 @@ int checkACL(struct clientparam * param){
 				if(param->redirected && acentry->chains && SAISNULL(&acentry->chains->addr) && !*SAPORT(&acentry->chains->addr)) {
 					continue;
 				}
-				dup = *acentry;
-				return handleredirect(param, &dup);
+				if(param->remsock != INVALID_SOCKET) {
+					return 0;
+				}
+				for(; i < conf.parentretries; i++){
+					dup = *acentry;
+					res = handleredirect(param, &dup);
+					if(!res) break;
+					if(param->remsock != INVALID_SOCKET) param->srv->so._closesocket(param->sostate, param->remsock);
+					param->remsock = INVALID_SOCKET;
+				}
+				return res;
 			}
 			return acentry->action;
 		}
@@ -639,13 +759,13 @@ struct authcache {
 	char * password;
 	time_t expires;
 #ifndef NOIPV6
-	struct sockaddr_in6 sa;
+	struct sockaddr_in6 sa, sinsl;
 #else
-	struct sockaddr_in sa;
+	struct sockaddr_in sa, sinsl;
 #endif
+	struct ace *acl;
 	struct authcache *next;
 } *authc = NULL;
-
 
 int cacheauth(struct clientparam * param){
 	struct authcache *ac, *last=NULL;
@@ -668,15 +788,30 @@ int cacheauth(struct clientparam * param){
 			continue;
 			
 		}
-		if(((!(conf.authcachetype&2)) || (param->username && ac->username && !strcmp(ac->username, (char *)param->username))) &&
-		   ((!(conf.authcachetype&1)) || (*SAFAMILY(&ac->sa) ==  *SAFAMILY(&param->sincr) && !memcmp(SAADDR(&ac->sa), SAADDR(&param->sincr), SAADDRLEN(&ac->sa)))) && 
-		   (!(conf.authcachetype&4) || (ac->password && param->password && !strcmp(ac->password, (char *)param->password)))) {
-			if(param->username){
-				myfree(param->username);
+		if(
+		 (!(conf.authcachetype&2) || (param->username && ac->username && !strcmp(ac->username, (char *)param->username))) &&
+		 (!(conf.authcachetype&4) || (ac->password && param->password && !strcmp(ac->password, (char *)param->password))) &&
+		 (!(conf.authcachetype&16) || (ac->acl == param->srv->acl))
+		) {
+
+			if(!(conf.authcachetype&1)
+				|| ((*SAFAMILY(&ac->sa) ==  *SAFAMILY(&param->sincr) 
+				   && !memcmp(SAADDR(&ac->sa), SAADDR(&param->sincr), SAADDRLEN(&ac->sa))))){
+
+				if(conf.authcachetype&32) {
+					param->sinsl = ac->sinsl;
+				}
+				if(param->username){
+					myfree(param->username);
+				}
+				param->username = (unsigned char *)mystrdup(ac->username);
+				pthread_mutex_unlock(&hash_mutex);
+				return 0;
 			}
-			param->username = (unsigned char *)mystrdup(ac->username);
-			pthread_mutex_unlock(&hash_mutex);
-			return 0;
+			else if ((conf.authcachetype&1) && (conf.authcachetype&8)) {
+				pthread_mutex_unlock(&hash_mutex);
+				return 10;
+			}
 		}
 		last = ac;
 		ac = ac->next;
@@ -702,9 +837,12 @@ int doauth(struct clientparam * param){
 			if(conf.authcachetype && authfuncs->authenticate && authfuncs->authenticate != cacheauth && param->username && (!(conf.authcachetype&4) || (!param->pwtype && param->password))){
 				pthread_mutex_lock(&hash_mutex);
 				for(ac = authc; ac; ac = ac->next){
-					if((!(conf.authcachetype&2) || !strcmp(ac->username, (char *)param->username)) &&
+					if(
+					   (!(conf.authcachetype&2) || !strcmp(ac->username, (char *)param->username)) &&
 					   (!(conf.authcachetype&1) || (*SAFAMILY(&ac->sa) ==  *SAFAMILY(&param->sincr) && !memcmp(SAADDR(&ac->sa), SAADDR(&param->sincr), SAADDRLEN(&ac->sa))))  &&
-					   (!(conf.authcachetype&4) || (ac->password && !strcmp(ac->password, (char *)param->password)))) {
+					   (!(conf.authcachetype&4) || (ac->password && !strcmp(ac->password, (char *)param->password))) &&
+					   (!(conf.authcachetype&16) || (ac->acl == param->srv->acl))
+					) {
 						ac->expires = conf.time + conf.authcachetime;
 						if(strcmp(ac->username, (char *)param->username)){
 							tmp = ac->username;
@@ -717,6 +855,11 @@ int doauth(struct clientparam * param){
 							myfree(tmp);
 						}
 						ac->sa = param->sincr;
+						if(conf.authcachetype&32) {
+							ac->sinsl = param-> sinsl;
+							*SAPORT(&ac->sinsl) = 0;
+						}
+
 						break;
 					}
 				}
@@ -728,6 +871,10 @@ int doauth(struct clientparam * param){
 						ac->sa = param->sincr;
 						ac->password = NULL;
 						if((conf.authcachetype&4) && param->password) ac->password = mystrdup((char *)param->password);
+						if(conf.authcachetype&32) {
+							ac->sinsl = param->sinsl;
+							*SAPORT(&ac->sinsl) = 0;
+						}
 					}
 					ac->next = authc;
 					authc = ac;
@@ -737,6 +884,7 @@ int doauth(struct clientparam * param){
 			break;
 		}
 		if(res > ret) ret = res;
+		if(ret > 9) return ret;
 	}
 	if(!res){
 		return alwaysauth(param);
@@ -859,6 +1007,7 @@ int strongauth(struct clientparam * param){
 	return 5;
 }
 
+int radauth(struct clientparam * param);
 
 struct auth authfuncs[] = {
 	{authfuncs+1, NULL, NULL, ""},
@@ -867,8 +1016,13 @@ struct auth authfuncs[] = {
 	{authfuncs+4, dnsauth, checkACL, "dnsname"},
 	{authfuncs+5, strongauth, checkACL, "strong"},
 	{authfuncs+6, cacheauth, checkACL, "cache"},
-	{authfuncs+7, NULL, NULL, "none"},
-
+#ifndef NORADIUS
+#define AUTHOFFSET 1
+	{authfuncs+7, radauth, checkACL, "radius"},
+#else
+#define AUTHOFFSET 0
+#endif
+	{authfuncs+7+AUTHOFFSET, NULL, NULL, "none"},
 	{NULL, NULL, NULL, ""}
 };
 
@@ -1082,10 +1236,10 @@ unsigned long udpresolve(int af, unsigned char * name, unsigned char * value, un
 			usetcp = nservers[i].usetcp;
 			*SAFAMILY(sinsl) = *SAFAMILY(&nservers[i].addr);
 		}
-		if((sock=so._socket(SASOCK(sinsl), usetcp?SOCK_STREAM:SOCK_DGRAM, usetcp?IPPROTO_TCP:IPPROTO_UDP)) == INVALID_SOCKET) break;
-		if(so._bind(sock,(struct sockaddr *)sinsl,SASIZE(sinsl))){
-			so._shutdown(sock, SHUT_RDWR);
-			so._closesocket(sock);
+		if((sock=so._socket(so.state, SASOCK(sinsl), usetcp?SOCK_STREAM:SOCK_DGRAM, usetcp?IPPROTO_TCP:IPPROTO_UDP)) == INVALID_SOCKET) break;
+		if(so._bind(so.state, sock,(struct sockaddr *)sinsl,SASIZE(sinsl))){
+			so._shutdown(so.state, sock, SHUT_RDWR);
+			so._closesocket(so.state, sock);
 			break;
 		}
 		if(makeauth && !SAISNULL(&authnserver.addr)){
@@ -1095,11 +1249,17 @@ unsigned long udpresolve(int af, unsigned char * name, unsigned char * value, un
 			*sinsr = nservers[i].addr;
 		}
 		if(usetcp){
-			if(so._connect(sock,(struct sockaddr *)sinsr,SASIZE(sinsr))) {
-				so._shutdown(sock, SHUT_RDWR);
-				so._closesocket(sock);
+			if(connectwithpoll(NULL, sock,(struct sockaddr *)sinsr,SASIZE(sinsr),CONNECT_TO)) {
+				so._shutdown(so.state, sock, SHUT_RDWR);
+				so._closesocket(so.state, sock);
 				break;
 			}
+#ifdef TCP_NODELAY
+			{
+				int opt = 1;
+				setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *)&opt, sizeof(opt));
+			}
+#endif
 		}
 		len = (int)strlen((char *)name);
 		
@@ -1131,15 +1291,15 @@ unsigned long udpresolve(int af, unsigned char * name, unsigned char * value, un
 			len+=2;
 		}
 
-		if(socksendto(sock, (struct sockaddr *)sinsr, buf, len, conf.timeouts[SINGLEBYTE_L]*1000) != len){
-			so._shutdown(sock, SHUT_RDWR);
-			so._closesocket(sock);
+		if(socksendto(NULL, sock, (struct sockaddr *)sinsr, buf, len, conf.timeouts[SINGLEBYTE_L]*1000) != len){
+			so._shutdown(so.state, sock, SHUT_RDWR);
+			so._closesocket(so.state, sock);
 			continue;
 		}
 		if(param) param->statscli64 += len;
-		len = sockrecvfrom(sock, (struct sockaddr *)sinsr, buf, 4096, conf.timeouts[DNS_TO]*1000);
-		so._shutdown(sock, SHUT_RDWR);
-		so._closesocket(sock);
+		len = sockrecvfrom(NULL, sock, (struct sockaddr *)sinsr, buf, 4096, conf.timeouts[DNS_TO]*1000);
+		so._shutdown(so.state, sock, SHUT_RDWR);
+		so._closesocket(so.state, sock);
 		if(len <= 13) {
 			continue;
 		}
@@ -1149,7 +1309,7 @@ unsigned long udpresolve(int af, unsigned char * name, unsigned char * value, un
 			us = ntohs(*(unsigned short*)buf);
 			len-=2;
 			buf+=2;
-			if(us > 4096 || us < len || (us > len && sockrecvfrom(sock, (struct sockaddr *)sinsr, buf+len, us-len, conf.timeouts[DNS_TO]*1000) != us-len)) {
+			if(us > 4096 || us < len || (us > len && sockrecvfrom(NULL, sock, (struct sockaddr *)sinsr, buf+len, us-len, conf.timeouts[DNS_TO]*1000) != us-len)) {
 				continue;
 			}
 		}
@@ -1186,7 +1346,8 @@ unsigned long udpresolve(int af, unsigned char * name, unsigned char * value, un
 				}
 				ttl = ntohl(*(unsigned long *)(buf + k + 6));
 				memcpy(value, buf + k + 12, af == AF_INET6? 16:4);
-				if(ttl < 60 || ttl > (3600*12)) ttl = 300;
+				if(ttl < 0 || ttl > (3600*12)) ttl = 3600*12;
+				if(!ttl) ttl = 1;
 				hashadd(af == AF_INET6?&dns6_table:&dns_table, name, value, conf.time+ttl);
 				if(retttl) *retttl = ttl;
 				return 1;
@@ -1334,6 +1495,8 @@ void sqlerr (char *buf){
 	pthread_mutex_unlock(&log_mutex);
 }
 
+unsigned char statbuf[8192];
+
 void logsql(struct clientparam * param, const unsigned char *s) {
 	SQLRETURN ret;
 	int len;
@@ -1341,35 +1504,35 @@ void logsql(struct clientparam * param, const unsigned char *s) {
 
 	if(param->nolog) return;
 	pthread_mutex_lock(&log_mutex);
-	len = dobuf(param, tmpbuf, s, (unsigned char *)"\'");
+	len = dobuf(param, statbuf, s, (unsigned char *)"\'");
 
 	if(attempt > 5){
 		time_t t;
 
 		t = time(0);
 		if (t - attempt_time < 180){
-			sqlerr((char *)tmpbuf);
+			sqlerr((char *)statbuf);
 			return;
 		}
 	}
 	if(!hstmt){
 		if(!init_sql(sqlstring)) {
-			sqlerr((char *)tmpbuf);
+			sqlerr((char *)statbuf);
 			return;
 		}
 	}
 	if(hstmt){
-		ret = SQLExecDirect(hstmt, (SQLCHAR *)tmpbuf, (SQLINTEGER)len);
+		ret = SQLExecDirect(hstmt, (SQLCHAR *)statbuf, (SQLINTEGER)len);
 		if(ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO){
 			close_sql();
 			if(!init_sql(sqlstring)){
-				sqlerr((char *)tmpbuf);
+				sqlerr((char *)statbuf);
 				return;
 			}
 			if(hstmt) {
-				ret = SQLExecDirect(hstmt, (SQLCHAR *)tmpbuf, (SQLINTEGER)len);
+				ret = SQLExecDirect(hstmt, (SQLCHAR *)statbuf, (SQLINTEGER)len);
 				if(ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO){
-					sqlerr((char *)tmpbuf);
+					sqlerr((char *)statbuf);
 					return;
 				}
 				attempt = 0;
@@ -1381,4 +1544,3 @@ void logsql(struct clientparam * param, const unsigned char *s) {
 }
 
 #endif
- 

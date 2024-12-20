@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -8,267 +8,743 @@
 
 #include "proxy.h"
 
-int sockmap(struct clientparam * param, int timeo){
- int res=0;
- uint64_t sent=0, received=0;
- SASIZETYPE sasize;
- struct pollfd fds[2];
- int sleeptime = 0, stop = 0;
- unsigned minsize;
- unsigned bufsize;
- FILTER_ACTION action;
- int retcode = 0;
+#define MAXFAILATTEMPT 10
 
- bufsize = SRVBUFSIZE; 
-
- minsize = (param->service == S_UDPPM || param->service == S_TCPPM)? bufsize - 1 : (bufsize>>2);
-
- fds[0].fd = param->clisock;
- fds[1].fd = param->remsock;
-
-
- if(param->cliinbuf == param->clioffset) param->cliinbuf = param->clioffset = 0;
- if(param->srvinbuf == param->srvoffset) param->srvinbuf = param->srvoffset = 0;
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "Starting sockets mapping");
+#ifdef WITHLOG
+#if WITHLOG > 1
+char logbuf[1024];
 #endif
- if(!param->waitclient64){
-	if(!param->srvbuf && (!(param->srvbuf=myalloc(bufsize)) || !(param->srvbufsize = bufsize))){
-		return (21);
-	}
+#define log(X) dolog(param,X)
+#else
+#define log(X)
+#endif
+
+#ifdef WITHSPLICE
+
+#include <fcntl.h>
+ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out, size_t len, unsigned int flags);
+#ifndef SPLICE_F_MOVE
+#define SPLICE_F_MOVE           0x01
+#endif
+#ifndef SPLICE_F_NONBLOCK
+#define SPLICE_F_NONBLOCK       0x02
+#endif
+#ifndef SPLICE_F_MORE
+#define SPLICE_F_MORE           0x04
+#endif
+#ifndef SPLICE_F_GIFT
+#define SPLICE_F_GIFT           0x08
+#endif
+
+
+#define MAXSPLICE 65536
+
+#endif
+
+#define MIN(a,b) ((a>b)?b:a)
+#define RETURN(xxx) { res = xxx; goto CLEANRET; }
+
+int sockmap(struct clientparam * param, int timeo, int usesplice){
+ uint64_t fromclient=0x7fffffffffffffff, fromserver =0x7fffffffffffffff;
+ uint64_t inclientbuf = 0, inserverbuf = 0;
+ int FROMCLIENT = 1, TOCLIENTBUF = 1, FROMCLIENTBUF = 1, TOSERVER = 1, 
+	FROMSERVER = 1, TOSERVERBUF = 1, FROMSERVERBUF = 1, TOCLIENT = 1;
+ int HASERROR=0;
+ int CLIENTTERM = 0, SERVERTERM = 0;
+ int after = 0;
+ struct pollfd fds[6];
+ struct pollfd *fdsp = fds;
+ int fdsc = 0;
+ int sleeptime = 0;
+ FILTER_ACTION action;
+ int res;
+ SASIZETYPE sasize;
+ int needaction = 0;
+ int graceclinum=0, gracesrvnum=0, graceclitraf=0, gracesrvtraf=0, gracetime=0;
+
+#ifdef WITHSPLICE
+ uint64_t inclientpipe = 0, inserverpipe = 0;
+ int TOCLIENTPIPE = 0, FROMCLIENTPIPE = 0, TOSERVERPIPE = 0, FROMSERVERPIPE = 0;
+ int pipesrv[2] = {-1,-1};
+ int pipecli[2] = {-1,-1};
+
+ if(param->operation == UDPASSOC || (!param->nolongdatfilter && (param->ndatfilterscli > 0 || param->ndatfilterssrv))) usesplice = 0;
+ if(usesplice){
+	TOCLIENTPIPE = FROMCLIENTPIPE = TOSERVERPIPE = FROMSERVERPIPE = 1;
+	TOCLIENTBUF = TOSERVERBUF = 0;
+	if(pipe2(pipecli, O_NONBLOCK) < 0) RETURN (21);
+	if(pipe2(pipesrv, O_NONBLOCK) < 0) RETURN (21);
  }
- if(!param->waitserver64){
-	if(!param->clibuf && (!(param->clibuf=myalloc(bufsize)) || !(param->clibufsize = bufsize))){
-		return (21);
-	}
+#endif
+
+ inserverbuf = param->srvinbuf - param->srvoffset;
+ inclientbuf = param->cliinbuf - param->clioffset;
+	
+ if(param->waitclient64) {
+	fromclient = param->waitclient64;
+	fromserver = 0;
+	inserverbuf = 0;
+	TOCLIENT = 0;
+	FROMSERVER = 0;
  }
+ if(param->waitserver64) {
+	fromserver = param->waitserver64;
+	fromclient = 0;
+	inclientbuf = 0;
+	TOSERVER = 0;
+	FROMCLIENT = 0;
+ }
+ if(param->operation == UDPASSOC && param->srv->singlepacket){
+	fromclient = inclientbuf;
+	FROMCLIENT = 0;
+ }
+ if(inserverbuf >= fromserver) FROMSERVER = 0;
+ if(inclientbuf >= fromclient) FROMCLIENT = 0;
+#ifdef WITHSPLICE
+ if(!usesplice)
+#endif
+ {
+	if(fromserver && !param->srvbuf && (!(param->srvbuf=myalloc(SRVBUFSIZE)) || !(param->srvbufsize = SRVBUFSIZE))){
+		RETURN (21);
+	}
+	if(fromclient && !param->clibuf && (!(param->clibuf=myalloc(SRVBUFSIZE)) || !(param->clibufsize = SRVBUFSIZE))){
+		RETURN (21);
+	}
+
+ }
+ if(param->srvinbuf == param->srvoffset) param->srvinbuf =param->srvoffset = 0;
+ if(param->cliinbuf == param->clioffset) param->cliinbuf =param->clioffset = 0;
+ if(param->clibufsize == param->cliinbuf) TOCLIENTBUF = 0;
+ if(param->srvbufsize == param->srvinbuf) TOSERVERBUF = 0;
 
  action = handlepredatflt(param);
  if(action == HANDLED){
-	return 0;
+	RETURN(0);
  }
- if(action != PASS) return 19;
- if(!param->nolongdatfilter){
-	if(param->cliinbuf > param->clioffset){
-		action = handledatfltcli(param,  &param->clibuf, (int *)&param->clibufsize, param->clioffset, (int *)&param->cliinbuf);
-		if(action == HANDLED){
-			return 0;
+ if(action != PASS) RETURN(19);
+
+ while(
+	((!CLIENTTERM) && fromserver && (inserverbuf 
+#ifdef WITHSPLICE
+		|| inserverpipe 
+#endif
+		|| (!SERVERTERM )))
+	||
+	((!SERVERTERM) && fromclient && (inclientbuf 
+#ifdef WITHSPLICE
+		|| inclientpipe 
+#endif
+		|| (!CLIENTTERM )))
+ ){
+
+
+#if WITHLOG > 1
+sprintf(logbuf, "int FROMCLIENT = %d, TOCLIENTBUF = %d, FROMCLIENTBUF = %d, TOSERVER = %d, "
+	"FROMSERVER = %d, TOSERVERBUF = %d, FROMSERVERBUF = %d, TOCLIENT = %d; inclientbuf=%d; "
+	"inserverbuf=%d, CLIENTTERM = %d, SERVERTERM =%d, fromserver=%u, fromclient=%u"
+#ifdef WITHSPLICE
+	 ", inserverpipe=%d, inclentpipe=%d "
+	"TOCLIENTPIPE=%d FROMCLIENTPIPE==%d TOSERVERPIPE==%d FROMSERVERPIPE=%d"
+#endif
+	,
+ FROMCLIENT, TOCLIENTBUF, FROMCLIENTBUF, TOSERVER, 
+	FROMSERVER, TOSERVERBUF, FROMSERVERBUF, TOCLIENT, 
+	(int)inclientbuf, (int)inserverbuf, CLIENTTERM, SERVERTERM, 
+	(unsigned)fromserver, (unsigned)fromclient
+#ifdef WITHSPLICE
+	,(int)inserverpipe, (int)inclientpipe,
+	TOCLIENTPIPE, FROMCLIENTPIPE, TOSERVERPIPE, FROMSERVERPIPE
+#endif
+	);
+log(logbuf);
+#endif
+
+	if(needaction && param->srv->gracedelay && !sleeptime){
+		if(gracetime != conf.time){
+		    gracetime = conf.time;
+		    graceclinum=gracesrvnum=graceclitraf=gracesrvtraf=0;
 		}
-		if(action != PASS) return 19;
-	}
-	if(param->srvinbuf > param->srvoffset){
-		action = handledatfltsrv(param,  &param->srvbuf, (int *)&param->srvbufsize, param->srvoffset, (int *)&param->srvinbuf);
-		if(action == HANDLED){
-			return 0;
+		else {
+		    if( (graceclinum && graceclitraf && graceclinum>=param->srv->gracenum && (!param->srv->gracetraf || graceclitraf/graceclinum <= param->srv->gracetraf)) ||
+			(gracesrvnum && gracesrvtraf && gracesrvnum>=param->srv->gracenum && (!param->srv->gracetraf || gracesrvtraf/gracesrvnum <= param->srv->gracetraf))) {
+			    sleeptime = param->srv->gracedelay;
+			}
 		}
-		if(action != PASS) return 19;
 	}
- }
-
-
-
- while (!stop&&!conf.timetoexit){
-	sasize = sizeof(struct sockaddr_in);
-	if(param->version < conf.version){
-		if((res = (*param->srv->authfunc)(param)) && res != 2 && !param->srv->noforce) {return(res);}
-		param->paused = conf.paused;
-		param->version = conf.version;
+	if(needaction > 2 && !sleeptime){
+		if(needaction > (MAXFAILATTEMPT+1)){RETURN (93);}
+		sleeptime = (1<<(needaction-2));
 	}
-	if((param->maxtrafin64 && param->statssrv64 >= param->maxtrafin64) || (param->maxtrafout64 && param->statscli64 >= param->maxtrafout64)){
-		return (10);
+	if(sleeptime > 0) {
+		if(sleeptime > (timeo * 1000)){RETURN (93);}
+		memset(fds, 0, sizeof(fds));
+		fds[0].fd = param->clisock;
+		fds[1].fd = param->remsock;
+		param->srv->so._poll(param->sostate, fds, 2, sleeptime);
+		sleeptime = 0;
 	}
 	if((param->srv->logdumpsrv && (param->statssrv64 > param->srv->logdumpsrv)) ||
 		(param->srv->logdumpcli && (param->statscli64 > param->srv->logdumpcli)))
-			(*param->srv->logfunc)(param, NULL);
-	fds[0].events = fds[1].events = 0;
-	if(param->srvinbuf > param->srvoffset && !param->waitclient64) {
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "will send to client");
-#endif
-		fds[0].events |= POLLOUT;
-	}
-	if((param->srvbufsize - param->srvinbuf) > minsize && !param->waitclient64 && (!param->waitserver64 ||(received + param->srvinbuf - param->srvoffset < param->waitserver64))) {
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "Will recv from server");
-#endif
-		fds[1].events |= POLLIN;
+			dolog(param, NULL);
+
+	if(param->version < conf.version){
+		if(!param->srv->noforce && (res = (*param->srv->authfunc)(param)) && res != 2) {RETURN(res);}
+		param->paused = conf.paused;
+		param->version = conf.version;
 	}
 
-	if(param->cliinbuf > param->clioffset && !param->waitserver64) {
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "Will send to server");
-#endif
-		fds[1].events |= POLLOUT;
+	if((param->maxtrafin64 && param->statssrv64 >= param->maxtrafin64) || (param->maxtrafout64 && param->statscli64 >= param->maxtrafout64)){
+		RETURN (10);
 	}
-    	if((param->clibufsize - param->cliinbuf) > minsize  && !param->waitserver64 &&(!param->srv->singlepacket || param->service != S_UDPPM) ) {
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "Will recv from client");
-#endif
-		fds[0].events |= POLLIN;
-	}
-	if(!fds[0].events && !fds[1].events) return 666;
-	res = so._poll(fds, 2, timeo*1000);
-	if(res < 0){
-		if(errno != EAGAIN && errno != EINTR) return 91;
-		if(errno == EINTR) usleep(SLEEPTIME);
-	 	continue;
-	}
-	if(res < 1){
-		return 92;
-	}
-	if( (fds[0].revents & (POLLERR|POLLHUP|POLLNVAL)) && !(fds[0].revents & POLLIN)) {
-		fds[0].revents = 0;
-		stop = 1;
-		retcode = 90;
-	}
-	if( (fds[1].revents & (POLLERR|POLLHUP|POLLNVAL)) && !(fds[1].revents & POLLIN)){
-		fds[1].revents = 0;
-		stop = 1;
-		retcode = 90;
-	}
-	if((fds[0].revents & POLLOUT)){
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "send to client");
-#endif
-		if(param->bandlimfunc) {
-			sleeptime = (*param->bandlimfunc)(param, param->srvinbuf - param->srvoffset, 0);
-		}
-		res = so._sendto(param->clisock, (char *)param->srvbuf + param->srvoffset,(!param->waitserver64 || (param->waitserver64 - received) > (param->srvinbuf - param->srvoffset))? param->srvinbuf - param->srvoffset : (int)(param->waitserver64 - received), 0, (struct sockaddr*)&param->sincr, sasize);
-		if(res < 0) {
-			if(errno != EAGAIN && errno != EINTR) return 96;
-			if(errno == EINTR) usleep(SLEEPTIME);
-			continue;
-		}
-		param->srvoffset += res;
-		received += res;
-		if(param->srvoffset == param->srvinbuf) param->srvoffset = param->srvinbuf = 0;
-		if(param->waitserver64 && param->waitserver64<= received){
-			return (98);
-		}
-		if(param->service == S_UDPPM && param->srv->singlepacket) {
-			stop = 1;
-		}
-	}
-	if((fds[1].revents & POLLOUT)){
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "send to server");
-#endif
-		if(param->bandlimfunc) {
-			int sl1;
 
-			sl1 = (*param->bandlimfunc)(param, 0, param->cliinbuf - param->clioffset);
-			if(sl1 > sleeptime) sleeptime = sl1;
-		}
-		res = so._sendto(param->remsock, (char *)param->clibuf + param->clioffset, (!param->waitclient64 || (param->waitclient64 - sent) > (param->cliinbuf - param->clioffset))? param->cliinbuf - param->clioffset : (int)(param->waitclient64 - sent), 0, (struct sockaddr*)&param->sinsr, sasize);
-		if(res < 0) {
-			if(errno != EAGAIN && errno != EINTR) return 97;
-			if(errno == EINTR) usleep(SLEEPTIME);
-			continue;
-		}
-		param->clioffset += res;
-		if(param->clioffset == param->cliinbuf) param->clioffset = param->cliinbuf = 0;
-		sent += res;
-		param->nwrites++;
-		param->statscli64 += res;
-		if(param->waitclient64 && param->waitclient64<= sent) {
-			return (99);
-		}
-	}
-	if ((fds[0].revents & POLLIN)) {
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "recv from client");
+	if(inclientbuf && TOSERVER){
+#ifdef WITHLOG
+log("send to server from buf");
 #endif
-		res = so._recvfrom(param->clisock, (char *)param->clibuf + param->cliinbuf, param->clibufsize - param->cliinbuf, 0, (struct sockaddr *)&param->sincr, &sasize);
-		if (res==0) {
-			so._shutdown(param->clisock, SHUT_RDWR);
-			so._closesocket(param->clisock);
-			fds[0].fd = param->clisock = INVALID_SOCKET;
-			stop = 1;
+		if(!param->nolongdatfilter){
+			action = handledatfltcli(param,  &param->clibuf, (int *)&param->clibufsize, param->cliinbuf - res, (int *)&param->cliinbuf);
+			if(action == HANDLED){
+				RETURN(0);
+			}
+			if(action != PASS) RETURN(19);
+			inclientbuf=param->cliinbuf - param->clioffset;
+		}
+		if(!inclientbuf){
+			param->clioffset = param->cliinbuf = 0;
+			if(fromclient) TOCLIENTBUF = 1;
+		}
+		sasize = sizeof(param->sinsr);
+		res = param->srv->so._sendto(param->sostate, param->remsock, (char *)param->clibuf + param->clioffset, (int)MIN(inclientbuf, fromclient), 0, (struct sockaddr*)&param->sinsr, sasize);
+		if(res <= 0) {
+			TOSERVER = 0;
+			if(errno && errno != EAGAIN && errno != EINTR){
+				SERVERTERM = 1;
+				HASERROR |= 2;
+			}
 		}
 		else {
-			if (res < 0){
-				if(errno != EAGAIN && errno != EINTR) return 94;
-				if(errno == EINTR) usleep(SLEEPTIME);
-				continue;
-			}
-			param->cliinbuf += res;
-			if(!param->nolongdatfilter){
-				action = handledatfltcli(param,  &param->clibuf, (int *)&param->clibufsize, param->cliinbuf - res, (int *)&param->cliinbuf);
-				if(action == HANDLED){
-					return 0;
-				}
-				if(action != PASS) return 19;
-			}
-
+#ifdef WITHLOG
+log("done send to server from buf");
+#endif
+		    	param->nwrites++;
+			param->statscli64 += res;
+			inclientbuf -= res;
+			fromclient -= res;
+			param->clioffset += res;
+			if(param->clioffset == param->cliinbuf)param->clioffset = param->cliinbuf = 0;
+			if(param->cliinbuf < param->clibufsize) TOCLIENTBUF = 1;
+			if(param->bandlimfunc) {
+				int sl1;
+				sl1 = (*param->bandlimfunc)(param, 0, res);
+				if(sl1 > sleeptime) sleeptime = sl1;
+		    	}
+			needaction = 0;
+			continue;
 		}
 	}
-	if (!stop && (fds[1].revents & POLLIN)) {
-		struct sockaddr_in sin;
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "recv from server");
+	if(inserverbuf && TOCLIENT){
+#ifdef WITHLOG
+log("send to client from buf");
 #endif
+		if(!param->nolongdatfilter){
+			action = handledatfltsrv(param,  &param->srvbuf, (int *)&param->srvbufsize, param->srvinbuf - res, (int *)&param->srvinbuf);
+			if(action == HANDLED){
+				RETURN(0);
+			}
+			if(action != PASS) RETURN(19);
+			inserverbuf = param->srvinbuf - param->srvoffset;
+		}
+		if(!inserverbuf){
+			param->srvinbuf = param->srvoffset = 0;
+			continue;
+		}
+		sasize = sizeof(param->sincr);
+		res = param->srv->so._sendto(param->sostate, param->clisock, (char *)param->srvbuf + param->srvoffset, (int)MIN(inserverbuf,fromserver), 0, (struct sockaddr*)&param->sincr, sasize);
+		if(res <= 0) {
+			TOCLIENT = 0;
+			if(errno && errno != EAGAIN && errno != EINTR){
+				CLIENTTERM = 1;
+				HASERROR |= 1;
+			}
 
-		sasize = sizeof(sin);
-		res = so._recvfrom(param->remsock, (char *)param->srvbuf + param->srvinbuf, param->srvbufsize - param->srvinbuf, 0, (struct sockaddr *)&sin, &sasize);
-		if (res==0) {
-			so._shutdown(param->remsock, SHUT_RDWR);
-			so._closesocket(param->remsock);
-			fds[1].fd = param->remsock = INVALID_SOCKET;
-			stop = 2;
 		}
 		else {
-			if (res < 0){
-				if(errno != EAGAIN && errno != EINTR) return 93;
-				if(errno == EINTR) usleep(SLEEPTIME);
-				continue;
-			}
-			param->srvinbuf += res;
-			param->nreads++;
-			param->statssrv64 += res;
-			if(!param->nolongdatfilter){
-				action = handledatfltsrv(param,  &param->srvbuf, (int *)&param->srvbufsize, param->srvinbuf - res, (int *)&param->srvinbuf);
-				if(action == HANDLED){
-					return 0;
-				}
-				if(action != PASS) return 19;
-			}
-
+#ifdef WITHLOG
+log("done send to client from buf");
+#endif
+			inserverbuf -= res;
+			fromserver -= res;
+			param->srvoffset += res;
+			if(param->srvoffset == param->srvinbuf)param->srvoffset = param->srvinbuf =0;
+			if(param->srvinbuf < param->srvbufsize) TOSERVERBUF = 1;
+			needaction = 0;
+			continue;
 		}
 	}
-
-	if(sleeptime > 0) {
-		if(sleeptime > (timeo * 1000)){return (95);}
-		usleep(sleeptime * SLEEPTIME);
-		sleeptime = 0;
+#ifdef WITHSPLICE
+	if(usesplice){
+		if(inclientpipe && !inclientbuf && FROMCLIENTPIPE && TOSERVER){
+#ifdef WITHLOG
+log("send to server from pipe");
+#endif
+			res = splice(pipecli[0], NULL, param->remsock, NULL, MIN(MAXSPLICE, inclientpipe), SPLICE_F_NONBLOCK|SPLICE_F_MOVE);
+#ifdef WITHLOG
+log("server from pipe splice finished\n");
+#if WITHLOG > 1
+#ifdef WITHSPLICE
+sprintf(logbuf, "res: %d, errno: %d", (int)res, (int)errno);
+log(logbuf);
+#endif
+#endif
+#endif
+			if(res >0) {
+			    	param->nwrites++;
+				param->statscli64 += res;
+				inclientpipe -= res;
+				fromclient -= res;
+				if(param->bandlimfunc) {
+					int sl1;
+					sl1 = (*param->bandlimfunc)(param, 0, res);
+					if(sl1 > sleeptime) sleeptime = sl1;
+		    		}
+				needaction = 0;
+				continue;
+			}
+			else {
+				FROMCLIENTPIPE = TOSERVER = 0;
+			}
+		}
+		if(inserverpipe && !inserverbuf && FROMSERVERPIPE && TOCLIENT){
+#ifdef WITHLOG
+log("send to client from pipe");
+#endif
+			res = splice(pipesrv[0], NULL, param->clisock, NULL, MIN(MAXSPLICE, inserverpipe), SPLICE_F_NONBLOCK|SPLICE_F_MOVE);
+#ifdef WITHLOG
+log("client from pipe splice finished\n");
+#if WITHLOG > 1
+#ifdef WITHSPLICE
+sprintf(logbuf, "res: %d, errno: %d", (int)res, (int)errno);
+log(logbuf);
+#endif
+#endif
+#endif
+			if(res > 0) {
+				inserverpipe -= res;
+				fromserver -= res;
+				if(fromserver)TOSERVERPIPE = 1;
+				needaction = 0;
+				continue;
+			}
+			else {
+				FROMSERVERPIPE = TOCLIENT = 0;
+			}
+		}
+		if(fromclient>inclientpipe && FROMCLIENT && TOCLIENTPIPE){
+			int error;
+			socklen_t len=sizeof(error);
+#ifdef WITHLOG
+log("read from client to pipe");
+#endif
+			errno = 0;
+			res = splice(param->clisock, NULL, pipecli[1], NULL, (int)MIN((uint64_t)MAXSPLICE - inclientpipe, (uint64_t)fromclient-inclientpipe), SPLICE_F_NONBLOCK|SPLICE_F_MOVE);
+#ifdef WITHLOG
+log("client to pipe splice finished\n");
+#if WITHLOG > 1
+#ifdef WITHSPLICE
+sprintf(logbuf, "res: %d, errno: %d", (int)res, (int)errno);
+log(logbuf);
+#endif
+#endif
+#endif
+			if(res <= 0) {
+				FROMCLIENT = TOCLIENTPIPE = 0;
+				if(res == 0 && !errno) {
+					CLIENTTERM = 1;
+					continue;
+				}
+			}
+			else {
+#ifdef WITHLOG
+log("done read from client to pipe");
+#endif
+				graceclinum++;
+				graceclitraf += res;
+				gracesrvnum = gracesrvtraf = 0;
+				inclientpipe += res;
+				if(inclientpipe >= MAXSPLICE) TOCLIENTPIPE = 0;
+				needaction = 0;
+				continue;
+			}
+		}
+		if(fromserver > inserverpipe && FROMSERVER && TOSERVERPIPE){
+			int error; 
+			socklen_t len=sizeof(error);
+			errno = 0;
+#ifdef WITHLOG
+log("read from server to pipe\n");
+#endif
+			res = splice(param->remsock, NULL, pipesrv[1], NULL, MIN(MAXSPLICE - inclientpipe, fromserver - inserverpipe), SPLICE_F_NONBLOCK|SPLICE_F_MOVE);
+#ifdef WITHLOG
+log("server to pipe splice finished\n");
+#if WITHLOG > 1
+#ifdef WITHSPLICE
+sprintf(logbuf, "res: %d, errno: %d", (int)res, (int)errno);
+log(logbuf);
+#endif
+#endif
+#endif
+			if(res <= 0) {
+				FROMSERVER = TOSERVERPIPE = 0;
+				if(res == 0 && !errno) {
+					SERVERTERM = 1;
+					continue;
+				}
+			}
+			else {
+#ifdef WITHLOG
+log("done read from server to pipe\n");
+#endif
+				gracesrvnum++;
+				gracesrvtraf += res;
+				graceclinum = graceclitraf = 0;
+			    	param->nreads++;
+				param->statssrv64 += res;
+				inserverpipe += res;
+				if(inserverpipe >= MAXSPLICE) TOSERVERPIPE = 0;
+				if(param->bandlimfunc) {
+					int sl1;
+					sl1 = (*param->bandlimfunc)(param, res, 0);
+					if(sl1 > sleeptime) sleeptime = sl1;
+		    		}
+ 				if(param->operation == UDPASSOC && param->srv->singlepacket){
+					fromserver = inserverpipe;
+					FROMSERVER = 0;
+				}
+				needaction = 0;
+				continue;
+			}
+		}
 	}
+	else
+#endif
+	{
+		if(fromclient > inclientbuf && FROMCLIENT && TOCLIENTBUF){
+#ifdef WITHLOG
+log("read from client to buf");
+#endif
+			sasize = sizeof(param->sincr);
+			res = param->srv->so._recvfrom(param->sostate, param->clisock, (char *)param->clibuf + param->cliinbuf, (int)MIN((uint64_t)param->clibufsize - param->cliinbuf, fromclient-inclientbuf), 0, (struct sockaddr *)&param->sincr, &sasize);
+			if(res <= 0) {
+				FROMCLIENT = 0;
+				if(res == 0 || (errno && errno != EINTR && errno !=EAGAIN)){
+					CLIENTTERM = 1;
+					continue;
+				}
+			}
+			else {
+#ifdef WITHLOG
+log("done read from client to buf");
+#endif
+				graceclinum++;
+				graceclitraf += res;
+				gracesrvnum = gracesrvtraf = 0;
+				inclientbuf += res;
+				param->cliinbuf += res;
+				if(param->clibufsize == param->cliinbuf) TOCLIENTBUF = 0;
+				needaction = 0;
+				continue;
+			}
+		}
+
+		if(fromserver > inserverbuf && FROMSERVER && TOSERVERBUF){
+#ifdef WITHLOG
+log("read from server to buf");
+#endif
+			sasize = sizeof(param->sinsr);
+			res = param->srv->so._recvfrom(param->sostate, param->remsock, (char *)param->srvbuf + param->srvinbuf, (int)MIN((uint64_t)param->srvbufsize - param->srvinbuf, fromserver-inserverbuf), 0, (struct sockaddr *)&param->sinsr, &sasize);
+			if(res <= 0) {
+				FROMSERVER = 0;
+				if(res == 0 || (errno && errno != EINTR && errno !=EAGAIN)) {
+					SERVERTERM = 1;
+					continue;
+				}
+			}
+			else {
+#ifdef WITHLOG
+log("done read from server to buf");
+#endif
+				gracesrvnum++;
+				gracesrvtraf += res;
+				graceclinum = graceclitraf = 0;
+			    	param->nreads++;
+				param->statssrv64 += res;
+				inserverbuf += res;
+				param->srvinbuf += res;
+				if(param->bandlimfunc) {
+					int sl1;
+					sl1 = (*param->bandlimfunc)(param, res, 0);
+					if(sl1 > sleeptime) sleeptime = sl1;
+		    		}
+				if(param->srvbufsize == param->srvinbuf) TOSERVERBUF = 0;
+ 				if(param->operation == UDPASSOC && param->srv->singlepacket){
+					fromserver = inserverbuf;
+					FROMSERVER = 0;
+				}
+				needaction = 0;
+				continue;
+			}
+		}
+	}
+	for(after = 0; after < 2; after ++){
+		fdsc = 0;
+		if(!after){
+			memset(fds, 0, sizeof(fds));
+		}
+		if(!CLIENTTERM){
+			if(!after){
+				fds[fdsc].fd = param->clisock;
+				if(fromclient && !FROMCLIENT && ((
+#ifdef WITHSPLICE
+					!usesplice && 
+#endif
+					TOCLIENTBUF) 
+#ifdef WITHSPLICE
+					|| (usesplice)
+#endif
+						)){
+#ifdef WITHLOG
+log("wait reading from client");
+#endif
+							fds[fdsc].events |= (POLLIN);
+						}
+				if(!TOCLIENT && (inserverbuf
+#ifdef WITHSPLICE
+					|| inserverpipe
+#endif
+						)){
+#ifdef WITHLOG
+log("wait writing to client");
+#endif
+							fds[fdsc].events |= POLLOUT;
+						}
+			}
+			else{
+				if(fds[fdsc].revents &  (POLLERR|POLLNVAL)) {
+					CLIENTTERM = 1;
+					HASERROR |= 1;
+				}
+				else {
+					if(fds[fdsc].revents & POLLIN) {
+#ifdef WITHLOG
+log("ready to read from client");
+#endif
+						FROMCLIENT = 1;
+					}
+					if(fds[fdsc].revents & POLLOUT) {
+#ifdef WITHLOG
+log("ready to write to client");
+#endif
+						TOCLIENT = 1;
+					}
+					if(fds[fdsc].revents &  (POLLHUP)) {
+						if(fds[fdsc].events & POLLIN) FROMCLIENT = 1;
+						if(fds[fdsc].events & POLLOUT) CLIENTTERM = 1;
+					}
+				}
+			}
+			fdsc++;
+		}
+		if(!SERVERTERM){
+			if(!after){
+				fds[fdsc].fd = param->remsock;
+				if(fromserver && !FROMSERVER && ((
+#ifdef WITHSPLICE
+					!usesplice && 
+#endif
+					TOSERVERBUF) 
+#ifdef WITHSPLICE
+					|| (usesplice)
+#endif
+						)){
+#ifdef WITHLOG
+log("wait reading from server");
+#endif
+							fds[fdsc].events |= (POLLIN);
+						}
+				if(!TOSERVER && (inclientbuf
+#ifdef WITHSPLICE
+					|| inclientpipe
+#endif
+						)){
+#ifdef WITHLOG
+log("wait writing from server");
+#endif
+							fds[fdsc].events |= POLLOUT;
+						}
+			}
+			else{
+				if(fds[fdsc].revents &  (POLLERR|POLLNVAL)) {
+#ifdef WITHLOG
+log("poll from server failed");
+#endif
+
+					SERVERTERM = 1;
+					HASERROR |=2;
+				}
+				else {
+					if(fds[fdsc].revents & POLLIN) {
+#ifdef WITHLOG
+log("ready to read from server");
+#endif
+						FROMSERVER = 1;
+					}
+					if(fds[fdsc].revents & POLLOUT) {
+#ifdef WITHLOG
+log("ready to write to server");
+#endif
+						TOSERVER = 1;
+					}
+					if(fds[fdsc].revents &  (POLLHUP)) {
+#ifdef WITHLOG
+log("server terminated connection");
+#endif
+						if(fds[fdsc].events & POLLIN) FROMSERVER = 1;
+						if(fds[fdsc].events & POLLOUT) SERVERTERM = 1;
+					}
+				}
+			}
+			fdsc++;
+		}
+#ifdef WITHSPLICE
+		if(usesplice){
+			if(fromclient>inclientpipe && !TOCLIENTPIPE && inclientpipe < MAXSPLICE){
+				if(!after){
+#ifdef WITHLOG
+log("wait writing to client pipe");
+#endif
+					fds[fdsc].fd = pipecli[1];
+					fds[fdsc].events |= POLLOUT;
+				}
+				else {
+					if(fds[fdsc].revents &  (POLLHUP|POLLERR|POLLNVAL)){
+						RETURN(90);
+					}
+					if(fds[fdsc].revents & POLLOUT) {
+#ifdef WITHLOG
+log("ready to write to client pipe");
+#endif
+						TOCLIENTPIPE = 1;
+					}
+				}
+				fdsc++;
+			}
+			if(inclientpipe && !FROMCLIENTPIPE){
+				if(!after){
+#ifdef WITHLOG
+log("wait reading from client pipe");
+#endif
+					fds[fdsc].fd = pipecli[0];
+					fds[fdsc].events |= (POLLIN);
+				}
+				else {
+					if(fds[fdsc].revents &  (POLLHUP|POLLERR|POLLNVAL)){
+						RETURN(90);
+					}
+#ifdef WITHLOG
+log("ready reading from client pipe");
+#endif
+					if(fds[fdsc].revents & (POLLIN)) FROMCLIENTPIPE = 1;
+				}
+				fdsc++;
+			}
+			if(fromserver>inserverpipe && !TOSERVERPIPE && inserverpipe < MAXSPLICE){
+				if(!after){
+#ifdef WITHLOG
+log("wait writing to server pipe");
+#endif
+					fds[fdsc].fd = pipesrv[1];
+					fds[fdsc].events |= POLLOUT;
+				}
+				else {
+					if(fds[fdsc].revents &  (POLLHUP|POLLERR|POLLNVAL)){
+						RETURN(90);
+					}
+#ifdef WITHLOG
+log("ready writing to server pipe");
+#endif
+					if(fds[fdsc].revents & POLLOUT) TOSERVERPIPE = 1;
+				}
+				fdsc++;
+			}
+			if(inserverpipe && !FROMSERVERPIPE){
+				if(!after){
+#ifdef WITHLOG
+log("wait reading from server pipe");
+#endif
+					fds[fdsc].fd = pipesrv[0];
+					fds[fdsc].events |= (POLLIN);
+				}
+				else {
+					if(fds[fdsc].revents &  (POLLHUP|POLLERR|POLLNVAL)){
+						RETURN(90);
+					}
+#ifdef WITHLOG
+log("ready reading from server pipe");
+#endif
+					if(fds[fdsc].revents & (POLLIN)) FROMSERVERPIPE = 1;
+				}
+				fdsc++;
+			}
+		}
+#endif
+		if(!after){
+			if(!fdsc) RETURN(90);
+
+
+
+
+#ifdef WITHLOG
+log("entering poll");
+#endif
+			res = param->srv->so._poll(param->sostate, fds, fdsc, timeo*1000);
+#ifdef WITHLOG
+log("leaving poll");
+#endif
+			if(res < 0){
+#ifdef WITHLOG
+log("poll error");
+#endif
+				if(errno != EINTR) RETURN(91);
+				break;
+			}
+			if(res < 1){
+#ifdef WITHLOG
+log("timeout");
+#endif
+				RETURN (92);
+			}
+		}
+	}
+	needaction++;
+
  }
- if(conf.timetoexit) return 89;
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "finished with mapping");
+ res = 0;
+ if(!fromserver && param->waitserver64) res = 98;
+ else if(!fromclient && param->waitclient64) res = 99;
+ else if(HASERROR) res = 94+HASERROR;
+ else if((inclientbuf || inserverbuf)) res = 94;
+#ifdef WITHSPLICE
+ else if(inclientpipe || inserverpipe) res = 94;
 #endif
- while(!param->waitclient64 && param->srvinbuf > param->srvoffset && param->clisock != INVALID_SOCKET){
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "flushing buffer to client");
+
+CLEANRET:
+
+#ifdef WITHSPLICE
+ if(pipecli[0] >= 0) close(pipecli[0]);
+ if(pipecli[1] >= 0) close(pipecli[1]);
+ if(pipesrv[0] >= 0) close(pipesrv[0]);
+ if(pipesrv[1] >= 0) close(pipesrv[1]);
 #endif
-	res = socksendto(param->clisock, (struct sockaddr *)&param->sincr, param->srvbuf + param->srvoffset, param->srvinbuf - param->srvoffset, conf.timeouts[STRING_S] * 1000);
-	if(res > 0){
-		param->srvoffset += res;
-		param->statssrv64 += res;
-		if(param->srvoffset == param->srvinbuf) param->srvoffset = param->srvinbuf = 0;
-	}
-	else break;
- } 
- while(!param->waitserver64 && param->cliinbuf > param->clioffset && param->remsock != INVALID_SOCKET){
-#if DEBUGLEVEL > 2
-(*param->srv->logfunc)(param, "flushing buffer to server");
-#endif
-	res = socksendto(param->remsock, (struct sockaddr *)&param->sinsr, param->clibuf + param->clioffset, param->cliinbuf - param->clioffset, conf.timeouts[STRING_S] * 1000);
-	if(res > 0){
-		param->clioffset += res;
-		param->statscli64 += res;
-		if(param->cliinbuf == param->clioffset) param->cliinbuf = param->clioffset = 0;
-	}
-	else break;
- } 
- return retcode;
+
+ return res;
 }

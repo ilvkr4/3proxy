@@ -8,13 +8,13 @@
 # library support. Add -DSAFESQL for poorely written ODBC library / drivers.
 
 
-BUILDDIR =
+BUILDDIR = ../bin/
 CC = gcc
 CFLAGS = -O2 -fno-strict-aliasing -c -D_SOLARIS -D_THREAD_SAFE -DGETHOSTBYNAME_R -D_REENTRANT -DNOODBC -DWITH_STD_MALLOC -DFD_SETSIZE=4096 -DWITH_POLL
 COUT = -o ./
-LN = gcc
+LN = $(CC)
 LDFLAGS = -O3
-DCFLAGS = -fpic
+DCFLAGS = -fPIC
 DLFLAGS = -shared
 DLSUFFICS = .ld.so
 LIBS = -lpthread -lsocket -lnsl -lresolv -ldl
@@ -26,6 +26,7 @@ OBJSUFFICS = .o
 DEFINEOPTION = -D
 COMPFILES = *~
 REMOVECOMMAND = rm -f
+AFTERCLEAN = (find . -type f -name "*.o" -delete && find src/ -type f -name "Makefile.var" -delete && find bin/ -type f -executable -delete) || true
 TYPECOMMAND = cat
 COMPATLIBS =
 MAKEFILE = Makefile.Solaris-gcc

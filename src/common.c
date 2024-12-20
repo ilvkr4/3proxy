@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -14,6 +14,8 @@
 char * copyright = COPYRIGHT;
 
 int randomizer = 1;
+
+
 
 #ifndef _WIN32
  pthread_attr_t pa;
@@ -30,6 +32,35 @@ int randomizer = 1;
 #endif
 
 unsigned char **stringtable = NULL;
+
+#ifdef WITH_LINUX_FUTEX
+int sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *addr2, int val3)
+{
+	return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
+}
+int mutex_lock(int *val)
+{
+	int c;
+	if ((c = __sync_val_compare_and_swap(val, 0, 1)) != 0)
+		do {
+			if(c == 2 || __sync_val_compare_and_swap(val, 1, 2) != 0)
+				sys_futex(val, FUTEX_WAIT_PRIVATE, 2, NULL, NULL, 0);
+		} while ((c = __sync_val_compare_and_swap(val, 0, 2)) != 0);
+	
+	return 0;
+}
+
+int mutex_unlock(int *val)
+{
+	if(__sync_fetch_and_sub (val, 1) != 1){
+		*val = 0;
+		sys_futex(val, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+	}
+	
+	
+	return 0;
+}
+#endif
 
 int myinet_ntop(int af, void *src, char *dst, socklen_t size){
 #ifndef NOIPV6
@@ -62,18 +93,17 @@ char *rotations[] = {
 
 
 struct extparam conf = {
-	{1, 5, 30, 60, 180, 1800, 15, 60, 0, 0},
+	{1, 5, 30, 60, 180, 1800, 15, 60, 15, 5, 0, 0},
 	NULL,
 	NULL,
 	NULL, NULL,
 	NULL,
 	NULL,
-#ifdef __FreeBSD__
-	8192, 
-#else
+	NULL,
 	0,
-#endif
-	0, -1, 0, 0, 0, 0, 0, 500, 0, 0, 0, 0, 0,
+	0, -1, 0, 0, 0, 0, 
+	0, 500, 0, 0, 0, 0, 0, 0, 2,
+	0, 0, 0,
 	6, 600,
 	1048576,
 	NULL, NULL,
@@ -108,19 +138,20 @@ char* NULLADDR="\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 int myrand(void * entropy, int len){
 	int i;
-	unsigned short init;
+	uint16_t init;
 
 	init = randomizer;
 	for(i=0; i < len/2; i++){
-		init ^= ((unsigned short *)entropy)[i];
+		init ^= ((uint16_t *)entropy)[i];
 	}
-	srand(init);
+	srand(rand()+init);
 	randomizer = rand();
 	return rand();
 	
 }
 
 #ifndef WITH_POLL
+#ifndef WITH_WSAPOLL
 int  
 #ifdef _WIN32
  WINAPI
@@ -156,32 +187,143 @@ int
 	return num;
 }
 #endif
+#endif
+
+
+#ifdef _WIN32
+    SOCKET WINAPI def_socket(void* state, int domain, int type, int protocol){
+        return socket(domain, type, protocol);
+    }
+    SOCKET WINAPI def_accept(void* state, SOCKET s, struct sockaddr * addr, int * addrlen){
+	return accept(s, addr, addrlen);
+    }
+    int WINAPI def_bind(void* state, SOCKET s, const struct sockaddr *addr, int addrlen){
+	return bind(s, addr, addrlen);
+    }
+    int WINAPI def_listen(void* state, SOCKET s, int backlog){
+	return listen(s, backlog);
+    }
+    int WINAPI def_connect(void* state, SOCKET s, const struct sockaddr *name, int namelen){
+	return connect(s, name, namelen);
+    }
+    int WINAPI def_getpeername(void* state, SOCKET s, struct sockaddr * name, int * namelen){
+	return getpeername(s, name, namelen);
+    }
+    int WINAPI def_getsockname(void* state, SOCKET s, struct sockaddr * name, int * namelen){
+	return 	getsockname(s, name, namelen);
+    }
+    int WINAPI def_getsockopt(void* state, SOCKET s, int level, int optname, char * optval, int * optlen){
+	return getsockopt(s, level, optname, optval, optlen);
+    }
+    int WINAPI def_setsockopt(void* state, SOCKET s, int level, int optname, const char *optval, int optlen){
+	return setsockopt(s, level, optname, optval, optlen);
+    }
+    int WINAPI def_poll(void* state, struct pollfd *fds, unsigned int nfds, int timeout){
+#ifndef WITH_POLL
+#ifndef WITH_WSAPOLL
+	return mypoll(fds, nfds, timeout);
+#else
+	return WSAPoll(fds, nfds, timeout);
+#endif
+#else
+	return poll(fds, nfds, timeout);
+#endif
+    }
+    int WINAPI def_send(void* state, SOCKET s, const char *msg, int len, int flags){
+	return send(s, msg, len, flags);
+    }
+    int WINAPI def_sendto(void* state, SOCKET s, const char *msg, int len, int flags, const struct sockaddr *to, int tolen){
+        return sendto(s, msg, len, flags, to, tolen);
+    }
+        
+    int WINAPI def_recv(void* state, SOCKET s, char *buf, int len, int flags){
+	return recv(s, buf, len, flags);
+    }
+    int WINAPI def_recvfrom(void* state, SOCKET s, char * buf, int len, int flags, struct sockaddr * from, int * fromlen){
+	return recvfrom(s, buf, len, flags, from, fromlen);
+    }
+    int WINAPI def_shutdown(void* state, SOCKET s, int how){
+	return shutdown(s, how);
+    }
+    int WINAPI def_closesocket(void* state, SOCKET s){
+	return closesocket(s);
+    }
+#else
+    SOCKET def_socket(void* state, int domain, int type, int protocol){
+        return socket(domain, type, protocol);
+    }
+    SOCKET def_accept(void* state, SOCKET s, struct sockaddr * addr, socklen_t* addrlen){
+	return accept(s, addr, addrlen);
+    }
+    int def_bind(void* state, SOCKET s, const struct sockaddr *addr, socklen_t addrlen){
+	return bind(s, addr, addrlen);
+    }
+    int def_getpeername(void* state, SOCKET s, struct sockaddr * name, socklen_t* namelen){
+	return getpeername(s, name, namelen);
+    }
+    int def_getsockname(void* state, SOCKET s, struct sockaddr * name, socklen_t* namelen){
+	return 	getsockname(s, name, namelen);
+    }
+    int def_listen(void* state, SOCKET s, int backlog){
+	return listen(s, backlog);
+    }
+    int def_connect(void* state, SOCKET s, const struct sockaddr *name, socklen_t namelen){
+	return connect(s, name, namelen);
+    }
+    int def_getsockopt(void* state, SOCKET s, int level, int optname, void * optval, socklen_t * optlen){
+	return getsockopt(s, level, optname, optval, optlen);
+    }
+    int def_setsockopt(void* state, int s, int level, int optname, const void *optval, socklen_t optlen){
+	return setsockopt(s, level, optname, optval, optlen);
+    }
+
+    int def_poll(void* state, struct pollfd *fds, nfds_t nfds, int timeout){
+#ifndef WITH_POLL
+	return mypoll(fds, nfds, timeout);
+#else
+	return poll(fds, nfds, timeout);
+#endif
+    }
+
+    ssize_t def_send(void* state, SOCKET s, const void *msg, size_t len, int flags){
+	return send(s, msg, len, flags);
+    }
+    ssize_t def_sendto(void* state, SOCKET s, const void *msg, size_t len, int flags, const struct sockaddr *to, socklen_t tolen){
+	return sendto(s, msg, len, flags, to, tolen);
+    }
+    ssize_t def_recv(void* state, SOCKET s, void *buf, size_t len, int flags){
+	return recv(s, buf, len, flags);
+    }
+    ssize_t def_recvfrom(void* state, SOCKET s, void * buf, size_t len, int flags, struct sockaddr * from, socklen_t* fromlen){
+	return recvfrom(s, buf, len, flags, from, fromlen);
+    }
+    int def_shutdown(void* state, SOCKET s, int how){
+	return shutdown(s, how);
+    }
+    int def_closesocket(void* state, SOCKET s){
+	return close(s);
+    }
+#endif
 
 struct sockfuncs so = {
-	socket,
-	accept,
-	bind,
-	listen,
-	connect,
-	getpeername,
-	getsockname,
-	getsockopt,
-	setsockopt,
-#ifdef WITH_POLL
-	poll,
-#else
-	mypoll,
-#endif
-	(void *)send,
-	(void *)sendto,
-	(void *)recv,
-	(void *)recvfrom,
-	shutdown,
-#ifdef _WIN32
-	closesocket
-#else
-	close
-#endif
+	NULL,
+	NULL,
+	def_socket,
+	def_accept,
+	def_bind,
+	def_listen,
+	def_connect,
+	def_getpeername,
+	def_getsockname,
+	def_getsockopt,
+	def_setsockopt,
+	def_poll,
+	def_send,
+	def_sendto,
+	def_recv,
+	def_recvfrom,
+	def_shutdown,
+	def_closesocket
 };
 
 #ifdef _WINCE
@@ -258,7 +400,10 @@ int parsehostname(char *hostname, struct clientparam *param, unsigned short port
 
 	if(!hostname || !*hostname)return 2;
 	if(*hostname == '[') se=strchr(hostname, ']');
-	if ( (sp = strchr(se?se:hostname, ':'))  && !strchr(sp+1, ':')) *sp = 0;
+	if ((sp = strchr(se?se:hostname, ':'))) {
+		if(strchr(sp+1, ':'))sp = NULL;
+		else *sp = 0;
+	}
 	if(se){
 		*se = 0;
 	}
@@ -327,324 +472,28 @@ int parseconnusername(char *username, struct clientparam *param, int extpasswd, 
 	return 0;
 }
 
-void clearstat(struct clientparam * param) {
 
+int connectwithpoll(struct clientparam *param, SOCKET sock, struct sockaddr *sa, SASIZETYPE size, int to){
+		struct pollfd fds[1];
 #ifdef _WIN32
-	struct timeb tb;
-
-	ftime(&tb);
-	param->time_start = (time_t)tb.time;
-	param->msec_start = (unsigned)tb.millitm;
-
+		unsigned long ul = 1;
+		ioctlsocket(sock, FIONBIO, &ul);
 #else
-	struct timeval tv;
-	struct timezone tz;
-	gettimeofday(&tv, &tz);
-
-	param->time_start = (time_t)tv.tv_sec;
-	param->msec_start = (tv.tv_usec / 1000);
+		fcntl(sock,F_SETFL, O_NONBLOCK | fcntl(sock,F_GETFL));
 #endif
-	param->statscli64 = param->statssrv64 = param->nreads = param->nwrites =
-		param->nconnects = 0;
-}
-
-
-char months[12][4] = {
-	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-};
-
-
-int dobuf2(struct clientparam * param, unsigned char * buf, const unsigned char *s, const unsigned char * doublec, struct tm* tm, char * format){
-	int i, j;
-	int len;
-	time_t sec;
-	unsigned msec;
-
-	long timezone;
-	unsigned delay;
-
-
-
-#ifdef _WIN32
-	struct timeb tb;
-
-	ftime(&tb);
-	sec = (time_t)tb.time;
-	msec = (unsigned)tb.millitm;
-	timezone = tm->tm_isdst*60 - tb.timezone;
-
-#else
-	struct timeval tv;
-	struct timezone tz;
-	gettimeofday(&tv, &tz);
-
-	sec = (time_t)tv.tv_sec;
-	msec = tv.tv_usec / 1000;
-#ifdef _SOLARIS
-	timezone = -altzone / 60;
-#else
-	timezone = tm->tm_gmtoff / 60;
-#endif
-#endif
-
-	delay = param->time_start?((unsigned) ((sec - param->time_start))*1000 + msec) - param->msec_start : 0;
-	*buf = 0;
-	for(i=0, j=0; format[j] && i < 4040; j++){
-		if(format[j] == '%' && format[j+1]){
-			j++;
-			switch(format[j]){
-				case '%':
-				 buf[i++] = '%';
-				 break;
-				case 'y':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_year%100);
-				 i+=2;
-				 break;
-				case 'Y':
-				 sprintf((char *)buf+i, "%.4d", tm->tm_year+1900);
-				 i+=4;
-				 break;
-				case 'm':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_mon+1);
-				 i+=2;
-				 break;
-				case 'o':
-				 sprintf((char *)buf+i, "%s", months[tm->tm_mon]);
-				 i+=3;
-				 break;
-				case 'd':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_mday);
-				 i+=2;
-				 break;
-				case 'H':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_hour);
-				 i+=2;
-				 break;
-				case 'M':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_min);
-				 i+=2;
-				 break;
-				case 'S':
-				 sprintf((char *)buf+i, "%.2d", tm->tm_sec);
-				 i+=2;
-				 break;
-				case 't':
-				 sprintf((char *)buf+i, "%.10u", (unsigned)sec);
-				 i+=10;
-				 break;
-				case 'b':
-				 i+=sprintf((char *)buf+i, "%u", delay?(unsigned)(param->statscli64 * 1000./delay):0);
-				 break;
-				case 'B':
-				 i+=sprintf((char *)buf+i, "%u", delay?(unsigned)(param->statssrv64 * 1000./delay):0);
-				 break;				 
-				case 'D':
-				 i+=sprintf((char *)buf+i, "%u", delay);
-				 break;
-				case '.':
-				 sprintf((char *)buf+i, "%.3u", msec);
-				 i+=3;
-				 break;
-				case 'z':
-				 sprintf((char *)buf+i, "%+.2ld%.2u", timezone / 60, (unsigned)(timezone%60));
-				 i+=5;
-				 break;
-				case 'U':
-				 if(param->username && *param->username){
-					for(len = 0; i< 4000 && param->username[len]; len++){
-					 buf[i] = param->username[len];
-					 if(param->srv->nonprintable && (buf[i] < 0x20 || strchr((char *)param->srv->nonprintable, buf[i]))) buf[i] = param->srv->replace;
-					 if(doublec && strchr((char *)doublec, buf[i])) {
-						buf[i+1] = buf[i];
-						i++;
-					 }
-					 i++;
-					}
-				 }
-				 else {
-					buf[i++] = '-';
-				 }
-				 break;
-				case 'n':
-					len = param->hostname? (int)strlen((char *)param->hostname) : 0;
-					if (len > 0 && !strchr((char *)param->hostname, ':')) for(len = 0; param->hostname[len] && i < 256; len++, i++){
-						buf[i] = param->hostname[len];
-					 	if(param->srv->nonprintable && (buf[i] < 0x20 || strchr((char *)param->srv->nonprintable, buf[i]))) buf[i] = param->srv->replace;
-						if(doublec && strchr((char *)doublec, buf[i])) {
-							buf[i+1] = buf[i];
-							i++;
-						}
-					}
-					else {
-						buf[i++] = '[';
-						i += myinet_ntop(*SAFAMILY(&param->req), SAADDR(&param->req), (char *)buf + i, 64);
-						buf[i++] = ']';
-					}
-					break;
-
-				case 'N':
-				 if(param->service < 15) {
-					 len = (conf.stringtable)? (int)strlen((char *)conf.stringtable[SERVICES + param->service]) : 0;
-					 if(len > 20) len = 20;
-					 memcpy(buf+i, (len)?conf.stringtable[SERVICES + param->service]:(unsigned char*)"-", (len)?len:1);
-					 i += (len)?len:1;
-				 }
-				 break;
-				case 'E':
-				 sprintf((char *)buf+i, "%.05d", param->res);
-				 i += 5;
-				 break;
-				case 'T':
-				 if(s){
-					for(len = 0; i<4000 && s[len]; len++){
-					 buf[i] = s[len];
-					 if(param->srv->nonprintable && (buf[i] < 0x20 || strchr((char *)param->srv->nonprintable, buf[i]))) buf[i] = param->srv->replace;
-					 if(doublec && strchr((char *)doublec, buf[i])) {
-						buf[i+1] = buf[i];
-						i++;
-					 }
-					 i++;
-					}
-				 }
-				 break;
-				case 'e':
-				 i += myinet_ntop(*SAFAMILY(&param->sinsl), SAADDR(&param->sinsl), (char *)buf + i, 64);
-				 break;
-				case 'i':
-				 i += myinet_ntop(*SAFAMILY(&param->sincl), SAADDR(&param->sincl), (char *)buf + i, 64);
-				 break;
-				case 'C':
-				 i += myinet_ntop(*SAFAMILY(&param->sincr), SAADDR(&param->sincr), (char *)buf + i, 64);
-				 break;
-				case 'R':
-				 i += myinet_ntop(*SAFAMILY(&param->sinsr), SAADDR(&param->sinsr), (char *)buf + i, 64);
-				 break;
-				case 'Q':
-				 i += myinet_ntop(*SAFAMILY(&param->req), SAADDR(&param->req), (char *)buf + i, 64);
-				 break;
-				case 'p':
-				 sprintf((char *)buf+i, "%hu", ntohs(*SAPORT(&param->srv->intsa)));
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'c':
-				 sprintf((char *)buf+i, "%hu", ntohs(*SAPORT(&param->sincr)));
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'r':
-				 sprintf((char *)buf+i, "%hu", ntohs(*SAPORT(&param->sinsr)));
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'q':
-				 sprintf((char *)buf+i, "%hu", ntohs(*SAPORT(&param->req)));
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'I':
-				 sprintf((char *)buf+i, "%"PRINTF_INT64_MODIFIER"u", param->statssrv64);
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'O':
-				 sprintf((char *)buf+i, "%"PRINTF_INT64_MODIFIER"u", param->statscli64);
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case 'h':
-				 sprintf((char *)buf+i, "%d", param->redirected);
-				 i += (int)strlen((char *)buf+i);
-				 break;
-				case '1':
-				case '2':
-				case '3':
-				case '4':
-				case '5':
-				case '6':
-				case '7':
-				case '8':
-				case '9':
-					{
-						int k, pmin=0, pmax=0;
-						for (k = j; isnumber(format[k]); k++);
-						if(format[k] == '-' && isnumber(format[k+1])){
-							pmin = atoi(format + j) - 1;
-							k++;
-							pmax = atoi(format + k) -1;
-							for (; isnumber(format[k]); k++);
-							j = k;
-						}
-						if(!s || format[k]!='T') break;
-						for(k = 0, len = 0; s[len] && i < 4000; len++){
-							if(isspace(s[len])){
-								k++;
-								while(isspace(s[len+1]))len++;
-								if(k == pmin) continue;
-							}
-							if(k>=pmin && k<=pmax) {
-								buf[i] = s[len];
-								if(param->srv->nonprintable && (buf[i] < 0x20 || strchr((char *)param->srv->nonprintable, buf[i]))) buf[i] = param->srv->replace;
-								if(doublec && strchr((char *)doublec, buf[i])) {
-									buf[i+1] = buf[i];
-									i++;
-				 				}
-								i++;
-							}
-						}
-						break;
-
-					}
-				default:
-				 buf[i++] = format[j];
-			}
+		if(param?param->srv->so._connect(param->sostate, sock,sa,size) : so._connect(so.state, sock,sa,size)) {
+			if(errno != EAGAIN && errno != EINPROGRESS) return (13);
 		}
-		else buf[i++] = format[j];
-	}
-	buf[i] = 0;
-	return i;
+		if(!errno) return 0;
+	        memset(fds, 0, sizeof(fds));
+	        fds[0].fd = sock;
+	        fds[0].events = POLLOUT|POLLIN;
+		if((param?param->srv->so._poll(param->sostate, fds, 1, to*1000):so._poll(so.state, fds, 1, to*1000)) <= 0 || !(fds[0].revents & POLLOUT)) {
+			return (13);
+		}
+		return 0;
 }
 
-int dobuf(struct clientparam * param, unsigned char * buf, const unsigned char *s, const unsigned char * doublec){
-	struct tm* tm;
-	int i;
-	char * format;
-	time_t t;
-
-	time(&t);
-	if(!param) return 0;
-	if(param->trafcountfunc)(*param->trafcountfunc)(param);
-	format = (char *)param->srv->logformat;
-	if(!format) format = "G%y%m%d%H%M%S.%. %p %E %U %C:%c %R:%r %O %I %h %T";
-	tm = (*format == 'G' || *format == 'g')?
-		gmtime(&t) : localtime(&t);
-	i = dobuf2(param, buf, s, doublec, tm, format + 1);
-	clearstat(param);
-	return i;
-}
-
-void lognone(struct clientparam * param, const unsigned char *s) {
-	if(param->trafcountfunc)(*param->trafcountfunc)(param);
-	clearstat(param);
-}
-unsigned char tmpbuf[8192];
-
-void logstdout(struct clientparam * param, const unsigned char *s) {
-	FILE *log;
-
-	pthread_mutex_lock(&log_mutex);
-	log = param->srv->stdlog?param->srv->stdlog:conf.stdlog?conf.stdlog:stdout;
-	dobuf(param, tmpbuf, s, NULL);
-	if(!param->nolog)if(fprintf(log, "%s\n", tmpbuf) < 0) {
-		perror("printf()");
-	};
-	if(log != conf.stdlog)fflush(log);
-	pthread_mutex_unlock(&log_mutex);
-}
-#ifndef _WIN32
-void logsyslog(struct clientparam * param, const unsigned char *s) {
-
-	pthread_mutex_lock(&log_mutex);
-	dobuf(param, tmpbuf, s, NULL);
-	if(!param->nolog)syslog(LOG_INFO, "%s", tmpbuf);
-	pthread_mutex_unlock(&log_mutex);
-}
-#endif
 
 int doconnect(struct clientparam * param){
  SASIZETYPE size;
@@ -657,7 +506,7 @@ int doconnect(struct clientparam * param){
 	return 0;
  if (param->remsock != INVALID_SOCKET){
 	size = sizeof(param->sinsr);
-	if(so._getpeername(param->remsock, (struct sockaddr *)&param->sinsr, &size)==-1) {return (15);}
+	if(param->srv->so._getpeername(param->sostate, param->remsock, (struct sockaddr *)&param->sinsr, &size)==-1) {return (14);}
  }
  else {
 	struct linger lg = {1,conf.timeouts[SINGLEBYTE_S]};
@@ -670,23 +519,7 @@ int doconnect(struct clientparam * param){
 		memcpy(SAADDR(&param->sinsr), SAADDR(&param->req), SAADDRLEN(&param->req)); 
 	}
 	if(!*SAPORT(&param->sinsr))*SAPORT(&param->sinsr) = *SAPORT(&param->req);
-	if ((param->remsock=so._socket(SASOCK(&param->sinsr), SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {return (11);}
-	so._setsockopt(param->remsock, SOL_SOCKET, SO_LINGER, (char *)&lg, sizeof(lg));
-#ifdef REUSE
-	{
-		int opt;
-
-#ifdef SO_REUSEADDR
-		opt = 1;
-		so._setsockopt(param->remsock, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(int));
-#endif
-#ifdef SO_REUSEPORT
-		opt = 1;
-		so._setsockopt(param->remsock, SOL_SOCKET, SO_REUSEPORT, (unsigned char *)&opt, sizeof(int));
-#endif
-	}
-#endif
-
+	if ((param->remsock=param->srv->so._socket(param->sostate, SASOCK(&param->sinsr), SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {return (11);}
 	if(SAISNULL(&param->sinsl)){
 #ifndef NOIPV6
 		if(*SAFAMILY(&param->sinsr) == AF_INET6) param->sinsl = param->srv->extsa6;
@@ -695,26 +528,50 @@ int doconnect(struct clientparam * param){
 			param->sinsl = param->srv->extsa;
 	}
 	*SAPORT(&param->sinsl) = 0;
-	if(so._bind(param->remsock, (struct sockaddr*)&param->sinsl, SASIZE(&param->sinsl))==-1) {
+	setopts(param->remsock, param->srv->srvsockopts);
+
+	param->srv->so._setsockopt(param->sostate, param->remsock, SOL_SOCKET, SO_LINGER, (char *)&lg, sizeof(lg));
+#ifdef REUSE
+	{
+		int opt;
+
+#ifdef SO_REUSEADDR
+		opt = 1;
+		param->srv->so._setsockopt(param->sostate, param->remsock, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(int));
+#endif
+#ifdef SO_REUSEPORT
+		opt = 1;
+		param->srv->so._setsockopt(param->sostate, param->remsock, SOL_SOCKET, SO_REUSEPORT, (unsigned char *)&opt, sizeof(int));
+#endif
+	}
+#endif
+#if defined SO_BINDTODEVICE
+	if(param->srv->obindtodevice) {
+		if(param->srv->so._setsockopt(param->sostate, param->remsock, SOL_SOCKET, SO_BINDTODEVICE, param->srv->obindtodevice, strlen(param->srv->obindtodevice) + 1))
+			return 12;
+	}
+#elif defined IP_BOUND_IF
+	if(param->srv->obindtodevice) {
+	    int idx;
+	    idx = if_nametoindex(param->srv->obindtodevice);
+	    if(!idx || (*SAFAMILY(&param->sinsl) == AF_INET && param->srv->so._setsockopt(param->sostate, param->remsock, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx))))
+			return 12;
+#ifndef NOIPV6
+	    if(*SAFAMILY(&param->sinsl) == AF_INET6 && param->srv->so._setsockopt(param->sostate, param->remsock, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx))) return 12;
+#endif
+	}
+#endif
+	if(param->srv->so._bind(param->sostate, param->remsock, (struct sockaddr*)&param->sinsl, SASIZE(&param->sinsl))==-1) {
 		return 12;
 	}
 	
 	if(param->operation >= 256 || (param->operation & CONNECT)){
-#ifdef _WIN32
-		unsigned long ul = 1;
-#endif
-		if(so._connect(param->remsock,(struct sockaddr *)&param->sinsr,SASIZE(&param->sinsr))) {
-			return (13);
+		if(connectwithpoll(param, param->remsock,(struct sockaddr *)&param->sinsr,SASIZE(&param->sinsr),CONNECT_TO)) {
+			return 13;
 		}
-		param->nconnects++;
-#ifdef _WIN32
-		ioctlsocket(param->remsock, FIONBIO, &ul);
-#else
-		fcntl(param->remsock,F_SETFL,O_NONBLOCK);
-#endif
 	}
 	size = sizeof(param->sinsl);
-	if(so._getsockname(param->remsock, (struct sockaddr *)&param->sinsl, &size)==-1) {return (15);}
+	if(param->srv->so._getsockname(param->sostate, param->remsock, (struct sockaddr *)&param->sinsl, &size)==-1) {return (15);}
  }
  return 0;
 }
@@ -806,11 +663,42 @@ unsigned long getip(unsigned char *name){
 }
 #endif
 
+int afdetect(unsigned char *name){
+	int ndots=0, ncols=0, nhex=0;
+	int i;
+
+	for(i=0; name[i]; i++){
+		if(name[i] == '.'){
+			if(++ndots > 3) {
+				return -1;
+			}
+		}
+		else if(name[i] == ':'){
+			if(++ncols > 7) {
+				return -1;
+			}
+		}
+		else if(name[i] == '%' || (name[i] >= 'a' && name[i] <= 'f') || (name[i] >= 'A' && name[i] <= 'F')){
+			nhex++;
+		}
+		else if(name[i] <'0' || name[i] >'9') {
+				return -1;
+		}
+	}
+	if(ndots == 3 && ncols == 0 && nhex == 0){
+		return AF_INET;
+	}
+	if(ncols >= 2) {
+		return AF_INET6;
+	}
+	return -1;
+
+}
+
 unsigned long getip46(int family, unsigned char *name,  struct sockaddr *sa){
 #ifndef NOIPV6
-	int ndots=0, ncols=0, nhex=0;
+	int detect;
 	struct addrinfo *ai, hint;
-	int i;
         RESOLVFUNC tmpresolv;
 
 	if(!sa) return 0;
@@ -822,34 +710,15 @@ unsigned long getip46(int family, unsigned char *name,  struct sockaddr *sa){
 #endif
 #ifndef NOIPV6
 	}
-	for(i=0; name[i]; i++){
-		if(name[i] == '.'){
-			if(++ndots > 3) {
-				break;
-			}
-		}
-		else if(name[i] == ':'){
-			if(++ncols > 7) {
-				break;
-			}
-		}
-		else if(name[i] == '%' || (name[i] >= 'a' && name[i] <= 'f') || (name[i] >= 'A' && name[i] <= 'F')){
-			nhex++;
-		}
-		else if(name[i] <'0' || name[i] >'9') {
-			break;
-		}
+
+	detect = afdetect(name);
+	if(detect != -1){
+		if(family == 4 && detect != AF_INET) return 0;
+		*SAFAMILY(sa) = (family == 6)? AF_INET6 : detect;
+		return inet_pton(*SAFAMILY(sa), (char *)name, SAADDR(sa))>0? *SAFAMILY(sa) : 0; 
 	}
-	if(!name[i]){
-		if(ndots == 3 && ncols == 0 && nhex == 0){
-			*SAFAMILY(sa)=(family == 6)?AF_INET6 : AF_INET;
-			return inet_pton(*SAFAMILY(sa), (char *)name, SAADDR(sa))? *SAFAMILY(sa) : 0; 
-		}
-		if(ncols >= 2) {
-			*SAFAMILY(sa)=AF_INET6;
-			return inet_pton(AF_INET6, (char *)name, SAADDR(sa))?(family==4? 0:AF_INET6) : 0;
-		}
-	}
+
+
 	if((tmpresolv = resolvfunc)){
 		int f = (family == 6 || family == 64)?AF_INET6:AF_INET;
 		*SAFAMILY(sa) = f;

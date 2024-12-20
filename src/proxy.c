@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -13,49 +13,49 @@
 
 char * proxy_stringtable[] = {
 /* 0 */	"HTTP/1.0 400 Bad Request\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>400 Bad Request</title></head>\r\n"
 	"<body><h2>400 Bad Request</h2></body></html>\r\n",
 
 /* 1 */	"HTTP/1.0 502 Bad Gateway\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>502 Bad Gateway</title></head>\r\n"
 	"<body><h2>502 Bad Gateway</h2><h3>Host Not Found or connection failed</h3></body></html>\r\n",
 
 /* 2 */	"HTTP/1.0 503 Service Unavailable\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>503 Service Unavailable</title></head>\r\n"
 	"<body><h2>503 Service Unavailable</h2><h3>You have exceeded your traffic limit</h3></body></html>\r\n",
 
 /* 3 */	"HTTP/1.0 503 Service Unavailable\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>503 Service Unavailable</title></head>\r\n"
 	"<body><h2>503 Service Unavailable</h2><h3>Recursion detected</h3></body></html>\r\n",
 
 /* 4 */	"HTTP/1.0 501 Not Implemented\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>501 Not Implemented</title></head>\r\n"
 	"<body><h2>501 Not Implemented</h2><h3>Required action is not supported by proxy server</h3></body></html>\r\n",
 
 /* 5 */	"HTTP/1.0 502 Bad Gateway\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>502 Bad Gateway</title></head>\r\n"
 	"<body><h2>502 Bad Gateway</h2><h3>Failed to connect parent proxy</h3></body></html>\r\n",
 
 /* 6 */	"HTTP/1.0 500 Internal Error\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>500 Internal Error</title></head>\r\n"
@@ -63,7 +63,7 @@ char * proxy_stringtable[] = {
 
 /* 7 */	"HTTP/1.0 407 Proxy Authentication Required\r\n"
 	"Proxy-Authenticate: Basic realm=\"proxy\"\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>407 Proxy Authentication Required</title></head>\r\n"
@@ -75,14 +75,14 @@ char * proxy_stringtable[] = {
 	"Content-Type: text/html\r\n\r\n",
 
 /* 10*/	"HTTP/1.0 404 Not Found\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>404 Not Found</title></head>\r\n"
 	"<body><h2>404 Not Found</h2><h3>File not found</body></html>\r\n",
 	
 /* 11*/	"HTTP/1.0 403 Forbidden\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>403 Access Denied</title></head>\r\n"
@@ -92,34 +92,34 @@ char * proxy_stringtable[] = {
 #ifndef NOCRYPT
 	"Proxy-Authenticate: NTLM\r\n"
 #endif
-	"Proxy-Authenticate: basic realm=\"proxy\"\r\n"
-	"Proxy-Connection: close\r\n"
+	"Proxy-Authenticate: Basic realm=\"proxy\"\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>407 Proxy Authentication Required</title></head>\r\n"
 	"<body><h2>407 Proxy Authentication Required</h2><h3>Access to requested resource disallowed by administrator or you need valid username/password to use this resource</h3></body></html>\r\n",
 
 /* 13*/	"HTTP/1.0 407 Proxy Authentication Required\r\n"
-	"Proxy-Connection: keep-alive\r\n"
+	"Connection: keep-alive\r\n"
 	"Content-Length: 0\r\n"
 	"Proxy-Authenticate: NTLM ",
 
 /* 14*/	"HTTP/1.0 403 Forbidden\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<pre>",
 
 /* 15*/	"HTTP/1.0 503 Service Unavailable\r\n"
-	"Proxy-Connection: close\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>503 Service Unavailable</title></head>\r\n"
 	"<body><h2>503 Service Unavailable</h2><h3>Your request violates configured policy</h3></body></html>\r\n",
 
 /* 16*/	"HTTP/1.0 401 Authentication Required\r\n"
-	"WWW-Authenticate: basic realm=\"FTP Server\"\r\n"
-	"Proxy-Connection: close\r\n"
+	"WWW-Authenticate: Basic realm=\"FTP Server\"\r\n"
+	"Connection: close\r\n"
 	"Content-type: text/html; charset=utf-8\r\n"
 	"\r\n"
 	"<html><head><title>401 FTP Server requires authentication</title></head>\r\n"
@@ -131,7 +131,7 @@ char * proxy_stringtable[] = {
 	NULL
 };
 
-#define LINESIZE 4096
+#define LINESIZE 32768
 #define BUFSIZE (LINESIZE*2)
 #define FTPBUFSIZE 1536
 
@@ -149,10 +149,10 @@ static void logurl(struct clientparam * param, char * buf, char * req, int ftp){
 	sb = strchr(buf, '\r');
 	if(sb)*sb = 0;
 	if(ftp && (se = strchr(buf + 10, ':')) && (sb = strchr(se, '@')) ) {
-		strcpy(se, sb);
+		memmove(se, sb, strlen(sb)+1);
 	}
  }
- if(param->res != 555 && param->res != 508)(*param->srv->logfunc)(param, (unsigned char *)(req?buf:NULL));
+ if(param->res != 555 && param->res != 508)dolog(param, (unsigned char *)(req?buf:NULL));
 }
 
 void decodeurl(unsigned char *s, int allowcr){
@@ -231,16 +231,17 @@ void * proxychild(struct clientparam* param) {
  SOCKET ftps;
  char ftpbuf[FTPBUFSIZE];
  int inftpbuf = 0;
+ int haveconnection = 0;
 #ifndef WITHMAIN
  FILTER_ACTION action;
 #endif
 
 
 
- 
+ if(param->remsock != INVALID_SOCKET) haveconnection = 1; 
  if(!(buf = myalloc(BUFSIZE))) {RETURN(21);}
  bufsize = BUFSIZE;
- anonymous = param->srv->singlepacket;
+ anonymous = param->srv->anonymous;
 for(;;){
  memset(buf, 0, bufsize);
  inbuf = 0;
@@ -252,15 +253,15 @@ for(;;){
 	fds[0].events = POLLIN;
 	fds[1].fd = param->remsock;
 	fds[1].events = POLLIN;
-	res = so._poll(fds, 2, conf.timeouts[STRING_S]*1000);
+	res = param->srv->so._poll(param->sostate, fds, 2, conf.timeouts[STRING_S]*1000);
 	if(res<=0) {
 		RETURN(555);
 	}
 	if((fds[1].revents & (POLLIN|POLLHUP|POLLERR|POLLNVAL))) {
 		if(param->transparent || (!param->redirected && param->redirtype == R_HTTP)) RETURN(555);
 		ckeepalive = 0;
-		so._shutdown(param->remsock, SHUT_RDWR);
-		so._closesocket(param->remsock);
+		param->srv->so._shutdown(param->sostate, param->remsock, SHUT_RDWR);
+		param->srv->so._closesocket(param->sostate, param->remsock);
 		param->remsock = INVALID_SOCKET;
 		param->redirected = 0;
 		param->redirtype = 0;
@@ -281,8 +282,8 @@ for(;;){
 	if(!param->transparent && !param->srv->transparent && (i<=prefix || strncasecmp((char *)buf, (char *)req, prefix))){
 		ckeepalive = 0;
 		if(param->remsock != INVALID_SOCKET){
-			so._shutdown(param->remsock, SHUT_RDWR);
-			so._closesocket(param->remsock);
+			param->srv->so._shutdown(param->sostate, param->remsock, SHUT_RDWR);
+			param->srv->so._closesocket(param->sostate, param->remsock);
 		}
 		param->remsock = INVALID_SOCKET;
 		param->redirected = 0;
@@ -407,7 +408,7 @@ for(;;){
 				memcpy(buf, proxy_stringtable[13], i);
 				genchallenge(param, (char *)param->password, (char *)buf + i);
 				memcpy(buf + strlen((char *)buf), "\r\n\r\n", 5);
-				socksend(param->clisock, buf, (int)strlen((char *)buf), conf.timeouts[STRING_S]);
+				socksend(param, param->clisock, buf, (int)strlen((char *)buf), conf.timeouts[STRING_S]);
 				ckeepalive = keepalive = 1;
 				goto REQUESTEND;
 			}
@@ -439,13 +440,15 @@ for(;;){
 		if(!sb)continue;
 		++sb;
 		while(isspace(*sb))sb++;
-		if(!strncasecmp((char *)sb,"keep-alive", 10))keepalive = 1;
-		else keepalive = 0;
-		continue; 
+		if(strncasecmp((char *)sb,"upgrade", 7)){
+			if(!strncasecmp((char *)sb,"keep-alive", 10))keepalive = 1;
+			else keepalive = 0;
+			continue; 
+		}
 	}
 	if( i > 11 && !strncasecmp((char *)(buf+inbuf),  "Expect: 100", 11)){
 		keepalive = 1;
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[17], (int)strlen(proxy_stringtable[17]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[17], (int)strlen(proxy_stringtable[17]), conf.timeouts[STRING_S]);
 		continue;
 	}
 	if(param->transparent && i > 6 && !strncasecmp((char *)buf + inbuf, "Host:", 5)){
@@ -523,6 +526,20 @@ for(;;){
  reqsize = (int)strlen((char *)req);
  reqbufsize = reqsize + 1;
 
+
+ if(param->srv->needuser > 1 && !param->username) {RETURN(4);}
+ if((res = (*param->srv->authfunc)(param))) {
+	if (res <= 10 || haveconnection || param->transparent) RETURN(res);
+	param->srv->so._closesocket(param->sostate, param->remsock);
+	param->remsock = INVALID_SOCKET;
+	param->redirected = 0;
+	param->redirtype = 0;
+	memset(&param->sinsl, 0, sizeof(param->sinsl));
+	memset(&param->sinsr, 0, sizeof(param->sinsr));
+	if((res = (*param->srv->authfunc)(param))) RETURN(res);
+ }
+
+
 #ifndef WITHMAIN
 
  action = handlereqfilters(param, &req, &reqbufsize, 0, &reqsize);
@@ -535,7 +552,24 @@ for(;;){
 	RETURN(0);
  }
  if(action != PASS) RETURN(517);
- if(param->ndatfilterscli > 0 && contentlength64 > 0){
+ param->nolongdatfilter = 0;
+
+ if(isconnect && param->redirtype != R_HTTP) {
+	socksend(param, param->clisock, (unsigned char *)proxy_stringtable[8], (int)strlen(proxy_stringtable[8]), conf.timeouts[STRING_S]);
+ }
+
+ if (param->npredatfilters){
+	action = handlepredatflt(param);
+	if(action == HANDLED){
+		RETURN(0);
+	}
+	if(action != PASS) RETURN(19);
+ }
+ 
+ if (conf.filtermaxsize && contentlength64 > (uint64_t)conf.filtermaxsize) {
+	param->nolongdatfilter = 1;
+ }
+ else if(param->ndatfilterscli > 0 && contentlength64 > 0){
   uint64_t newlen64;
   newlen64 = sockfillbuffcli(param, (unsigned long)contentlength64, CONNECTION_S);
   if(newlen64 == contentlength64) {
@@ -545,15 +579,13 @@ for(;;){
 	}
 	if(action != PASS) RETURN(517);
 	contentlength64 = param->cliinbuf;
-	param->ndatfilterscli = 0;
+	param->nolongdatfilter = 1;
   }
   sprintf((char*)buf+strlen((char *)buf), "Content-Length: %"PRINTF_INT64_MODIFIER"u\r\n", contentlength64);
  }
 
 #endif
 
- if(param->srv->needuser > 1 && !param->username) {RETURN(4);}
- if((res = (*param->srv->authfunc)(param))) {RETURN(res);}
 
  if(ftp && param->redirtype != R_HTTP){
 	SOCKET s;
@@ -612,13 +644,13 @@ for(;;){
 	}
 	if(ftps == INVALID_SOCKET){RETURN(780);}
 	if(!mode){
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[8], (int)strlen(proxy_stringtable[8]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[8], (int)strlen(proxy_stringtable[8]), conf.timeouts[STRING_S]);
 		s = param->remsock;
 		param->remsock = ftps;
 		if((param->operation == FTP_PUT) && (contentlength64 > 0)) param->waitclient64 = contentlength64;
-		res = sockmap(param, conf.timeouts[CONNECTION_L]);
+		res = mapsocket(param, conf.timeouts[CONNECTION_L]);
 		if (res == 99) res = 0;
-		so._closesocket(ftps);
+		param->srv->so._closesocket(param->sostate, ftps);
 		ftps = INVALID_SOCKET;
 		param->remsock = s;
 	}
@@ -758,9 +790,9 @@ for(;;){
 			if((bufsize - inbuf) < LINESIZE){
 				if (bufsize > 20000){
 					if(!headsent++){
-						socksend(param->clisock, (unsigned char *)proxy_stringtable[9], (int)strlen(proxy_stringtable[9]), conf.timeouts[STRING_S]);
+						socksend(param, param->clisock, (unsigned char *)proxy_stringtable[9], (int)strlen(proxy_stringtable[9]), conf.timeouts[STRING_S]);
 					}
-					if((unsigned)socksend(param->clisock, buf, inbuf, conf.timeouts[STRING_S]) != inbuf){
+					if((unsigned)socksend(param, param->clisock, buf, inbuf, conf.timeouts[STRING_S]) != inbuf){
 						RETURN(781);
 					}
 					inbuf = 0;
@@ -774,7 +806,7 @@ for(;;){
 		}
 		memcpy(buf+inbuf, "<hr>", 4);
 		inbuf += 4;
-		so._closesocket(ftps);
+		param->srv->so._closesocket(param->sostate, ftps);
 		ftps = INVALID_SOCKET;
 		param->remsock = s;
 		if(inbuf){
@@ -786,12 +818,12 @@ for(;;){
 				sprintf(ftpbuf, 
 					"HTTP/1.0 200 OK\r\n"
 					"Content-Type: text/html\r\n"
-					"Proxy-Connection: keep-alive\r\n"
+					"Connection: keep-alive\r\n"
 					"Content-Length: %d\r\n\r\n",
 					inbuf);
-				socksend(param->clisock, (unsigned char *)ftpbuf, (int)strlen(ftpbuf), conf.timeouts[STRING_S]);
+				socksend(param, param->clisock, (unsigned char *)ftpbuf, (int)strlen(ftpbuf), conf.timeouts[STRING_S]);
 			}
-			socksend(param->clisock, buf, inbuf, conf.timeouts[STRING_S]);
+			socksend(param, param->clisock, buf, inbuf, conf.timeouts[STRING_S]);
 			if(res){RETURN(res);}
 			if(!headsent)goto REQUESTEND;
 		}
@@ -801,10 +833,17 @@ for(;;){
  }
 
  if(isconnect && param->redirtype != R_HTTP) {
-	socksend(param->clisock, (unsigned char *)proxy_stringtable[8], (int)strlen(proxy_stringtable[8]), conf.timeouts[STRING_S]);
-	if(param->redirectfunc) return (*param->redirectfunc)(param);
-	param->res =  sockmap(param, conf.timeouts[CONNECTION_L]);
-	if(param->redirectfunc) return (*param->redirectfunc)(param);
+	if(param->redirectfunc) {
+		if(req)myfree(req);
+		if(buf)myfree(buf);
+		return (*param->redirectfunc)(param);
+	}
+	param->res =  mapsocket(param, conf.timeouts[CONNECTION_L]);
+	if(param->redirectfunc) {
+		if(req)myfree(req);
+		if(buf)myfree(buf);
+		return (*param->redirectfunc)(param);
+	}
 	RETURN(param->res);
  }
 
@@ -813,9 +852,13 @@ for(;;){
  }
 
  else {
+#ifdef TCP_CORK
+	int opt = 1;
+	param->srv->so._setsockopt(param->sostate, param->remsock, IPPROTO_TCP, TCP_CORK, (unsigned char *)&opt, sizeof(int));
+#endif
 	 redirect = 1;
 	 res = (int)strlen((char *)req);
-	 if(socksend(param->remsock, req , res, conf.timeouts[STRING_L]) != res) {
+	 if(socksend(param, param->remsock, req , res, conf.timeouts[STRING_L]) != res) {
 		RETURN(518);
 	 }
 	 param->statscli64 += res;
@@ -847,26 +890,33 @@ for(;;){
 		sprintf((char*)buf+strlen((char *)buf), "\r\n");
  }
 #endif
- if(keepalive <= 1) sprintf((char*)buf+strlen((char *)buf), "%s: %s\r\n", (param->redirtype == R_HTTP)?"Proxy-Connection":"Connection", keepalive? "keep-alive":"close");
+ if(keepalive <= 1) {
+	sprintf((char*)buf+strlen((char *)buf), "Connection: %s\r\n", keepalive? "keep-alive":"close");
+ }
  if(param->extusername){
-	sprintf((char*)buf + strlen((char *)buf), "%s: basic ", (redirect)?"Proxy-Authorization":"Authorization");
+	sprintf((char*)buf + strlen((char *)buf), "%s: Basic ", (redirect)?"Proxy-Authorization":"Authorization");
 	sprintf((char*)username, "%.128s:%.128s", param->extusername, param->extpassword?param->extpassword:(unsigned char*)"");
 	en64(username, buf+strlen((char *)buf), (int)strlen((char *)username));
 	sprintf((char*)buf + strlen((char *)buf), "\r\n");
  }
  sprintf((char*)buf+strlen((char *)buf), "\r\n");
- if ((res = socksend(param->remsock, buf+reqlen, (int)strlen((char *)buf+reqlen), conf.timeouts[STRING_S])) != (int)strlen((char *)buf+reqlen)) {
+ if ((res = socksend(param, param->remsock, buf+reqlen, (int)strlen((char *)buf+reqlen), conf.timeouts[STRING_S])) != (int)strlen((char *)buf+reqlen)) {
 	RETURN(518);
  }
+#ifdef TCP_CORK
+ {
+	int opt = 0;
+	param->srv->so._setsockopt(param->sostate, param->remsock, IPPROTO_TCP, TCP_CORK, (unsigned char *)&opt, sizeof(int));
+ }
+#endif
  param->statscli64 += res;
  param->nwrites++;
  if(param->bandlimfunc) {
 	sleeptime = param->bandlimfunc(param, 0, (int)strlen((char *)buf));
  }
  if(contentlength64 > 0){
-	 param->nolongdatfilter = 0;
 	 param->waitclient64 = contentlength64;
-	 res = sockmap(param, conf.timeouts[CONNECTION_S]);
+	 res = mapsocket(param, conf.timeouts[CONNECTION_S]);
 	 param->waitclient64 = 0;
 	 if(res != 99) {
 		RETURN(res);
@@ -891,7 +941,7 @@ for(;;){
 		++sb;
 		while(isspace(*sb))sb++;
 		if(strncasecmp((char *)sb,"keep-alive", 10))ckeepalive = 0;
-		if(!param->srv->transparent)continue; 
+		if(!param->srv->transparent && res >= 200)continue; 
 	}
 	else if(i> 6 && !param->srv->transparent && (!strncasecmp((char *)(buf+inbuf), "proxy-", 6))){
 		continue; 
@@ -967,10 +1017,15 @@ for(;;){
  if (conf.filtermaxsize && contentlength64 > (uint64_t)conf.filtermaxsize) {
 	param->nolongdatfilter = 1;
  }
- else if(param->unsafefilter && param->ndatfilterssrv > 0 && contentlength64 > 0 && param->operation != HTTP_HEAD && res != 204 && res != 304){
+ else if(param->ndatfilterssrv > 0 && contentlength64 > 0 && param->operation != HTTP_HEAD && res != 204 && res != 304){
   uint64_t newlen;
   newlen = (uint64_t)sockfillbuffsrv(param, (unsigned long) contentlength64, CONNECTION_S);
   if(newlen == contentlength64) {
+	action = handlepredatflt(param);
+	if(action == HANDLED){
+		RETURN(0);
+	}
+	if(action != PASS) RETURN(19);
 	action = handledatfltsrv(param,  &param->srvbuf, (int *)&param->srvbufsize, 0, (int *)&param->srvinbuf);
 	param->nolongdatfilter = 1;
 	if(action == HANDLED){
@@ -990,14 +1045,12 @@ for(;;){
 		"Proxy-support: Session-Based-Authentication\r\n"
 		"Connection: Proxy-support\r\n"
 	 );
-	 if(!param->srv->transparent){
+	 if(!param->srv->transparent && res>=200){
 		if(ckeepalive <= 1) sprintf((char*)buf+strlen((char *)buf), "Connection: %s\r\n", 
-		(hascontent && ckeepalive)?"Keep-Alive":"Close");
-		if(!param->transparent)sprintf((char*)buf+strlen((char *)buf), "Proxy-Connection: %s\r\n", 
-		(hascontent && ckeepalive)?"Keep-Alive":"Close");
+		(hascontent && ckeepalive)?"keep-alive":"close");
 	 }
 	 sprintf((char*)buf + strlen((char *)buf), "\r\n");
-	 if((socksend(param->clisock, buf, (int)strlen((char *)buf), conf.timeouts[STRING_S])) != (int)strlen((char *)buf)) {
+	 if((socksend(param, param->clisock, buf, (int)strlen((char *)buf), conf.timeouts[STRING_S])) != (int)strlen((char *)buf)) {
 		RETURN(521);
 	 }
  }
@@ -1006,7 +1059,7 @@ for(;;){
 		if(param->chunked){
 			unsigned char smallbuf[32];
 			while ((i = sockgetlinebuf(param, SERVER, smallbuf, 30, '\n', conf.timeouts[STRING_S])) == 2) {
-				if (socksend(param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
+				if (socksend(param, param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
 					RETURN(533);
 				}
 				if(param->chunked == 2) break;
@@ -1015,12 +1068,12 @@ for(;;){
 				keepalive = 0;
 				break;
 			}
-			if (socksend(param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
+			if (socksend(param, param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
 					RETURN(535);
 			}
 			if(param->chunked == 2) {
 				if((i = sockgetlinebuf(param, SERVER, smallbuf, 30, '\n', conf.timeouts[STRING_S])) != 2) RETURN(534);
-				if (socksend(param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
+				if (socksend(param, param->clisock, smallbuf, i, conf.timeouts[STRING_S]) != i){
 					RETURN(533);
 				}
 				break;
@@ -1034,7 +1087,7 @@ for(;;){
 		}
 		if(param->chunked != 2){
 			param->waitserver64 = contentlength64;
-		 	if((res = sockmap(param, conf.timeouts[CONNECTION_S])) != 98){
+		 	if((res = mapsocket(param, conf.timeouts[CONNECTION_S])) != 98){
 				RETURN(res);
 			}
 	 		param->waitserver64 = 0;
@@ -1042,20 +1095,20 @@ for(;;){
         } while(param->chunked);
  }
  if(isconnect && res == 200 && param->operation){
-	RETURN (sockmap(param, conf.timeouts[CONNECTION_S]));
+	RETURN (mapsocket(param, conf.timeouts[CONNECTION_S]));
  }
  else if(isconnect){
 	ckeepalive = keepalive = 1;
  }
  else if(!hascontent && !param->chunked) {
-	RETURN(sockmap(param, conf.timeouts[CONNECTION_S]));
+	RETURN(mapsocket(param, conf.timeouts[CONNECTION_S]));
  }
  contentlength64 = 0;
 REQUESTEND:
 
  if((!ckeepalive || !keepalive) && param->remsock != INVALID_SOCKET){
-	so._shutdown(param->remsock, SHUT_RDWR);
-	so._closesocket(param->remsock);
+	param->srv->so._shutdown(param->sostate, param->remsock, SHUT_RDWR);
+	param->srv->so._closesocket(param->sostate, param->remsock);
 	param->remsock = INVALID_SOCKET;
 	RETURN(0);
  }
@@ -1070,41 +1123,41 @@ CLEANRET:
  if(param->res != 555 && param->res && param->clisock != INVALID_SOCKET && (param->res < 90 || param->res >=800 || param->res == 100 ||(param->res > 500 && param->res< 800))) {
 	if((param->res>=509 && param->res < 517) || param->res > 900) while( (i = sockgetlinebuf(param, CLIENT, buf, BUFSIZE - 1, '\n', conf.timeouts[STRING_S])) > 2);
 	if(param->res == 10) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[2], (int)strlen(proxy_stringtable[2]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[2], (int)strlen(proxy_stringtable[2]), conf.timeouts[STRING_S]);
 	}
 	else if (res == 700 || res == 701){
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[16], (int)strlen(proxy_stringtable[16]), conf.timeouts[STRING_S]);
-		socksend(param->clisock, (unsigned char *)ftpbuf, inftpbuf, conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[16], (int)strlen(proxy_stringtable[16]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)ftpbuf, inftpbuf, conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 100 || (param->res >10 && param->res < 20) || (param->res >701 && param->res <= 705)) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[1], (int)strlen(proxy_stringtable[1]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[1], (int)strlen(proxy_stringtable[1]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res >=20 && param->res < 30) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[6], (int)strlen(proxy_stringtable[6]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[6], (int)strlen(proxy_stringtable[6]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res >=30 && param->res < 80) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[5], (int)strlen(proxy_stringtable[5]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[5], (int)strlen(proxy_stringtable[5]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 1 || (!param->srv->needuser && param->res < 10)) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[11], (int)strlen(proxy_stringtable[11]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[11], (int)strlen(proxy_stringtable[11]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res < 10) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[param->srv->usentlm?12:7], (int)strlen(proxy_stringtable[param->srv->usentlm?12:7]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[param->srv->usentlm?12:7], (int)strlen(proxy_stringtable[param->srv->usentlm?12:7]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 999) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[4], (int)strlen(proxy_stringtable[4]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[4], (int)strlen(proxy_stringtable[4]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 519) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[3], (int)strlen(proxy_stringtable[3]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[3], (int)strlen(proxy_stringtable[3]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 517) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[15], (int)strlen(proxy_stringtable[15]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[15], (int)strlen(proxy_stringtable[15]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res == 780) {
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[10], (int)strlen(proxy_stringtable[10]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[10], (int)strlen(proxy_stringtable[10]), conf.timeouts[STRING_S]);
 	}
 	else if(param->res >= 511 && param->res<=516){
-		socksend(param->clisock, (unsigned char *)proxy_stringtable[0], (int)strlen(proxy_stringtable[0]), conf.timeouts[STRING_S]);
+		socksend(param, param->clisock, (unsigned char *)proxy_stringtable[0], (int)strlen(proxy_stringtable[0]), conf.timeouts[STRING_S]);
 	}
  } 
  logurl(param, (char *)buf, (char *)req, ftp);

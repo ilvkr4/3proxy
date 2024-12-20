@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -10,11 +10,13 @@
 
 #define RETURN(xxx) { param->res = xxx; goto CLEANRET; }
 
-#define LINESIZE 2048
+#define LINESIZE 65536
 
 extern FILE *writable;
 FILE * confopen();
 extern void decodeurl(unsigned char *s, int filter);
+
+
 
 struct printparam {
 	char buf[1024];
@@ -22,14 +24,43 @@ struct printparam {
 	struct clientparam *cp;
 };
 
+char * aceaction (int action){
+	switch (action) {
+		case ALLOW:
+		case REDIRECT:
+			return "allow";
+		case DENY:
+			return "deny";
+		case BANDLIM:
+			return "bandlim";
+		case NOBANDLIM:
+			return "nobandlim";
+		case COUNTIN:
+			return "countin";
+		case NOCOUNTIN:
+			return "nocountin";
+		case COUNTOUT:
+			return "countout";
+		case NOCOUNTOUT:
+			return "nocountout";
+		case COUNTALL:
+			return "countall";
+		case NOCOUNTALL:
+			return "nocountall";
+		default:
+			return "unknown";
+	}
+}
+
+
 static void stdpr(struct printparam* pp, char *buf, int inbuf){
 	if((pp->inbuf + inbuf > 1024) || !buf) {
-		socksend(pp->cp->clisock, (unsigned char *)pp->buf, pp->inbuf, conf.timeouts[STRING_S]);
+		socksend(pp->cp, pp->cp->clisock, (unsigned char *)pp->buf, pp->inbuf, conf.timeouts[STRING_S]);
 		pp->inbuf = 0;
 		if(!buf) return;
 	}
 	if(inbuf >= 1000){
-		socksend(pp->cp->clisock, (unsigned char *)buf, inbuf, conf.timeouts[STRING_S]);		
+		socksend(pp->cp, pp->cp->clisock, (unsigned char *)buf, inbuf, conf.timeouts[STRING_S]);		
 	}
 	else {
 		memcpy(pp->buf + pp->inbuf, buf, inbuf);
@@ -187,7 +218,8 @@ char * admin_stringtable[]={
 	"HTTP/1.0 200 OK\r\n"
 	"Connection: close\r\n"
 	"Cache-Control: no-cache\r\n"
-	"Content-type: text/xml\r\n"
+	"Content-type: text/xml; charset=utf-8\r\n"
+	"Content-disposition: inline; filename=running.xml\r\n"
 	"\r\n"
 	"<?xml version=\"1.0\"?>\r\n"
 	"<?xml-stylesheet href=\"/SX\" type=\"text/css\"?>\r\n"
@@ -259,11 +291,11 @@ char * admin_stringtable[]={
 
 	"<h3>Counters</h3>\r\n"
 	"<table border = \'1\'>\r\n"
-	"<tr align=\'center\'><td>Description</td><td>Active</td>"
+	"<tr align=\'center\'><td>Action</td><td>#/Desc</td><td>Active</td>"
 	"<td>Users</td><td>Source Address</td><td>Destination Address</td>"
 	"<td>Port</td>"
 	"<td>Limit</td><td>Units</td><td>Value</td>"
-	"<td>Reset</td><td>Updated</td><td>Num</td></tr>\r\n",
+	"<td>Reset</td><td>Updated</td><td>Position</td></tr>\r\n",
 
 	"</table>\r\n",
 
@@ -341,9 +373,12 @@ void * adminchild(struct clientparam* param) {
  char *sb;
  char *req = NULL;
  struct printparam pp;
- int contentlen = 0;
+ unsigned contentlen = 0;
  int isform = 0;
+ int limited = 0;
 
+
+ limited =param->srv->singlepacket;
  pp.inbuf = 0;
  pp.cp = param;
 
@@ -390,7 +425,8 @@ void * adminchild(struct clientparam* param) {
 	else if(i > 15 && (!strncasecmp(buf, "content-length:", 15))){
 		sb = buf + 15;
 		while(isspace(*sb))sb++;
-		contentlen = atoi(sb);
+		sscanf(sb, "%u", &contentlen);
+		if(contentlen > LINESIZE*1024) contentlen = 0;
 	}
 	else if(i > 13 && (!strncasecmp(buf, "content-type:", 13))){
 		sb = buf + 13;
@@ -408,7 +444,7 @@ void * adminchild(struct clientparam* param) {
 	printstr(&pp, authreq);
 	RETURN(res);
  }
- if(param->srv->singlepacket || param->redirected){
+ if(limited || param->redirected){
 	if(*req == 'C') req[1] = 0;
 	else *req = 0;
  }
@@ -423,14 +459,19 @@ void * adminchild(struct clientparam* param) {
 			for(cp = conf.trafcounter; cp; cp = cp->next, num++){
 			 int inbuf = 0;
 
-			 if(cp->ace && (param->srv->singlepacket || param->redirected)){
+			 if(cp->ace && (limited || param->redirected)){
 				if(!ACLmatches(cp->ace, param))continue;
 			 }
 			 if(req[1] == 'S' && atoi(req+2) == num) cp->disabled=0;
 			 if(req[1] == 'D' && atoi(req+2) == num) cp->disabled=1;
-			 inbuf += sprintf(buf,	"<tr>"
-						"<td>%s</td><td><A HREF=\'/C%c%d\'>%s</A></td><td>",
-						(cp->comment)?cp->comment:"&nbsp;",
+			 inbuf += sprintf(buf,	"<tr><td>%s</td><td>", cp->ace?aceaction(cp->ace->action):"-");
+			 if(cp->number || cp->comment)
+				inbuf += sprintf(buf+inbuf, "%d/%s</td>" , cp->number,
+						(cp->comment)?cp->comment:"&nbsp;");
+			else
+				inbuf += sprintf(buf+inbuf, " - </td>");
+
+			inbuf += sprintf(buf+inbuf, "<td><A HREF=\'/C%c%d\'>%s</A></td><td>",
 						(cp->disabled)?'S':'D',
 						num,
 						(cp->disabled)?"NO":"YES"
@@ -462,7 +503,7 @@ void * adminchild(struct clientparam* param) {
 			 else {
 				inbuf += printportlist(buf+inbuf, LINESIZE-128, cp->ace->ports, ",<br />\r\n");
 			 }
-			 if(cp->type == NONE) {
+			 if(cp->ace && (cp->ace->action == NOCOUNTIN || cp->ace->action == NOCOUNTOUT || cp->ace->action == NOCOUNTALL)) {
 			  inbuf += sprintf(buf+inbuf,	
 					"</td><td colspan=\'6\' align=\'center\'>exclude from limitation</td></tr>\r\n"
 				 );
@@ -471,11 +512,12 @@ void * adminchild(struct clientparam* param) {
 			  inbuf += sprintf(buf+inbuf,	
 					"</td><td>%"PRINTF_INT64_MODIFIER"u</td>"
 					"<td>MB%s</td>"
-					"<td>%"PRINTF_INT64_MODIFIER"u</td>"
+					"<td>%"PRINTF_INT64_MODIFIER"u.%"PRINTF_INT64_MODIFIER"u</td>"
 					"<td>%s</td>",
 				 cp->traflim64 / (1024 * 1024),
 				 rotations[cp->type],
-				 cp->traf64,
+				 cp->traf64 / (1024 * 1024),
+				 (((cp->traf64/16) *10) / (64*1024))%10,
 				 cp->cleared?ctime(&cp->cleared):"never"
 				);
 			 inbuf += sprintf(buf + inbuf,
@@ -520,7 +562,7 @@ void * adminchild(struct clientparam* param) {
 				break;
 			}
 				printstr(&pp, "<h3>Please be careful editing config file remotely</h3>");
-				printstr(&pp, "<form method=\"POST\" action=\"/U\"><textarea cols=\"80\" rows=\"30\" name=\"conffile\">");
+				printstr(&pp, "<form method=\"POST\" action=\"/U\" enctype=\"application/x-www-form-urlencoded\"><textarea cols=\"80\" rows=\"30\" name=\"conffile\">");
 				while(fgets(buf, 256, fp)){
 					printstr(&pp, buf);
 				}
@@ -530,24 +572,23 @@ void * adminchild(struct clientparam* param) {
 		}
 	case 'U':
 		{
-			int l=0;
+			unsigned l=0;
 			int error = 0;
 
-			if(!writable || fseek(writable, 0, 0)){
+			if(!writable || !contentlen || fseek(writable, 0, 0)){
 				error = 1;
 			}
-			while((i = sockgetlinebuf(param, CLIENT, (unsigned char *)buf, LINESIZE - 1, '+', conf.timeouts[STRING_S])) > 0){
-				if(i > (contentlen - l)) i = (contentlen - l);
-				buf[i] = 0;
+			while(l < contentlen && (i = sockgetlinebuf(param, CLIENT, (unsigned char *)buf, (contentlen - l) > LINESIZE - 1?LINESIZE - 1:contentlen - l, '+', conf.timeouts[STRING_S])) > 0){
+				if((unsigned)i > (contentlen - l)) i = (contentlen - l);
 				if(!l){
-					if(strncasecmp(buf, "conffile=", 9)) error = 1;
+					if(i<9 || strncasecmp(buf, "conffile=", 9)) error = 1;
 				}
 				if(!error){
+					buf[i] = 0;
 					decodeurl((unsigned char *)buf, 1);
 					fprintf(writable, "%s", l? buf : buf + 9);
 				}
 				l += i;
-				if(l >= contentlen) break;
 			}
 			if(writable && !error){
 				fflush(writable);
@@ -571,7 +612,7 @@ CLEANRET:
 
  printstr(&pp, NULL);
  if(buf) myfree(buf);
- (*param->srv->logfunc)(param, (unsigned char *)req);
+ dolog(param, (unsigned char *)req);
  if(req)myfree(req);
  freeparam(param);
  return (NULL);

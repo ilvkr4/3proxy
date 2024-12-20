@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -28,9 +28,8 @@ unsigned char * strings[] = {
 /* 15 */	(unsigned char *)"DNSPR",
 /* 16 */	(unsigned char *)"FTPPR",
 /* 17 */	(unsigned char *)"SMTPP",
-/* 18 */	(unsigned char *)"ICQPR",
-/* 19 	(unsigned char *)"MSNPR", */
-/* 19 */	(unsigned char *)"ZOMBIE",
+/* 18 */	(unsigned char *)"ZOMBIE",
+/* 19 */	NULL,
 /* 20 */	NULL,
 /* 21 */	NULL,
 /* 22 */	NULL,
@@ -62,9 +61,9 @@ unsigned char * strings[] = {
 	"is coded right now. What you see is a part of work that is done\n"
 	"already.\n"
 	"<p>Please send all your comments to\n"
-	"<A HREF=\"mailto:3proxy@security.nnov.ru\">3proxy@security.nnov.ru</A>\n"
+	"<A HREF=\"mailto:3proxy@3proxy.org\">3proxy@3proxy.org</A>\n"
 	"<p>Documentation:\n"
-	"<A HREF=\"http://3proxy.ru/\">http://3proxy.ru/</A>\n"
+	"<A HREF=\"https://3proxy.org/\">http://3proxy.org/</A>\n"
 	"</tr></td></table>",
 /* 36 */	NULL,
 /* 37 */	NULL,

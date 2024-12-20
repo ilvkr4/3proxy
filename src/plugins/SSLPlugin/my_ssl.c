@@ -1,3 +1,9 @@
+/*
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
+
+   please read License Agreement
+
+*/
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -26,11 +32,6 @@ typedef struct _ssl_conn {
 	SSL *ssl;
 } ssl_conn;
 
-static X509 *CA_cert = NULL;
-static EVP_PKEY *CA_key = NULL;
-static EVP_PKEY *server_key = NULL;
-static X509_NAME *name = NULL;
-
 pthread_mutex_t ssl_file_mutex;
 
 
@@ -49,14 +50,14 @@ static size_t bin2hex (const unsigned char* bin, size_t bin_length, char* str, s
 	char *p;
 	size_t i;
 	
-	if ( str_length < ( bin_length+1) ) 
+	if ( str_length < ( (bin_length*2)+1) ) 
 		return 0; 
 
 	p = str; 
 	for ( i=0; i < bin_length; ++i )  
 	{ 
-		*p++ = hexMap[*bin >> 4];  
-		*p++ = hexMap[*bin & 0xf]; 
+		*p++ = hexMap[(*(unsigned char *)bin) >> 4];  
+		*p++ = hexMap[(*(unsigned char *)bin) & 0xf]; 
 		++bin;
 	} 
 	
@@ -85,8 +86,6 @@ static int add_ext(X509 *cert, int nid, char *value)
 	return 1;
 }
 
-extern char *cert_path;
-
 void del_ext(X509 *dst_cert, int nid, int where){
 	int ex;
 
@@ -98,41 +97,45 @@ void del_ext(X509 *dst_cert, int nid, int where){
 
 }
 
-SSL_CERT ssl_copy_cert(SSL_CERT cert)
+SSL_CERT ssl_copy_cert(SSL_CERT cert, SSL_CONFIG *config)
 {
 	int err = -1;
-	FILE *fcache;
+	BIO *fcache;
 	X509 *src_cert = (X509 *) cert;
 	X509 *dst_cert = NULL;
 
 	EVP_PKEY *pk = NULL;
 	RSA *rsa = NULL;
 
-	unsigned char p1[] = "RU";
-	unsigned char p2[] = "3proxy";
-	unsigned char p3[] = "3proxy CA";
+	int hash_size = 20;
+	unsigned char hash_sha1[20];
+	char hash_name_sha1[(20*2) + 1];
+	char cache_name[256];
 
-	char hash_name[sizeof(src_cert->sha1_hash)*2 + 1];
-	char cache_name[200];
+	err = X509_digest(src_cert, EVP_sha1(), hash_sha1, NULL);
+	if(!err){
+		return NULL;
+	}
 
-	bin2hex(src_cert->sha1_hash, sizeof(src_cert->sha1_hash), hash_name, sizeof(hash_name));
-	sprintf(cache_name, "%s%s.pem", cert_path, hash_name);
-	/* check if certificate is already cached */
-	fcache = fopen(cache_name, "rb");
-	if ( fcache != NULL ) {
+	if(config->certcache){
+	    bin2hex(hash_sha1, 20, hash_name_sha1, sizeof(hash_name_sha1));
+	    sprintf(cache_name, "%s%s.pem", config->certcache, hash_name_sha1);
+	    /* check if certificate is already cached */
+	    fcache = BIO_new_file(cache_name, "rb");
+	    if ( fcache != NULL ) {
 #ifndef _WIN32
-		flock(fileno(fcache), LOCK_SH);
+		flock(BIO_get_fd(fcache, NULL), LOCK_SH);
 #endif
-		dst_cert = PEM_read_X509(fcache, &dst_cert, NULL, NULL);
+		dst_cert = PEM_read_bio_X509(fcache, &dst_cert, NULL, NULL);
 #ifndef _WIN32
-		flock(fileno(fcache), LOCK_UN);
+		flock(BIO_get_fd(fcache, NULL), LOCK_UN);
 #endif
-		fclose(fcache);
+		BIO_free(fcache);
 		if ( dst_cert != NULL ){
 			return dst_cert;
 		}
+	    }
 	}
-
 	/* proceed if certificate is not cached */
 	dst_cert = X509_dup(src_cert);
 	if ( dst_cert == NULL ) {
@@ -143,27 +146,19 @@ SSL_CERT ssl_copy_cert(SSL_CERT cert)
 	del_ext(dst_cert, NID_authority_key_identifier, -1);
 	del_ext(dst_cert, NID_certificate_policies, 0);
 
-	err = X509_set_pubkey(dst_cert, server_key);
+	err = X509_set_pubkey(dst_cert, config->server_key?config->server_key:config->CA_key);
 	if ( err == 0 ) {
 		X509_free(dst_cert);
 		return NULL;
 	}
 
 
-	/* Its self signed so set the issuer name to be the same as the
- 	 * subject.
-	 */
-	err = X509_set_issuer_name(dst_cert, name);
+	err = X509_set_issuer_name(dst_cert, X509_get_subject_name(config->CA_cert));
 	if(!err){
 		X509_free(dst_cert);
 		return NULL;
 	}
-	err = X509_digest(dst_cert, EVP_sha1(), dst_cert->sha1_hash, NULL);
-	if(!err){
-		X509_free(dst_cert);
-		return NULL;
-	}
-	err = X509_sign(dst_cert, CA_key, EVP_sha1());
+	err = X509_sign(dst_cert, config->CA_key, EVP_sha256());
 	if(!err){
 		X509_free(dst_cert);
 		return NULL;
@@ -171,22 +166,24 @@ SSL_CERT ssl_copy_cert(SSL_CERT cert)
 
 	/* write to cache */
 
-	fcache = fopen(cache_name, "wb");
-	if ( fcache != NULL ) {
+	if(config->certcache){
+	    fcache = BIO_new_file(cache_name, "wb");
+	    if ( fcache != NULL ) {
 #ifndef _WIN32
-		flock(fileno(fcache), LOCK_EX);
+		flock(BIO_get_fd(fcache, NULL), LOCK_EX);
 #endif
-		PEM_write_X509(fcache, dst_cert);
+		PEM_write_bio_X509(fcache, dst_cert);
 #ifndef _WIN32
-		flock(fileno(fcache), LOCK_UN);
+		flock(BIO_get_fd(fcache, NULL), LOCK_UN);
 #endif
-		fclose(fcache);
+		BIO_free(fcache);
+	    }
 	}
 	return dst_cert;
 }
 
 
-SSL_CONN ssl_handshake_to_server(SOCKET s, char * hostname, SSL_CERT *server_cert, char **errSSL)
+SSL_CONN ssl_handshake_to_server(SOCKET s, char * hostname, SSL_CONFIG *config, SSL_CERT *server_cert, char **errSSL)
 {
 	int err = 0;
 	X509 *cert;
@@ -198,22 +195,22 @@ SSL_CONN ssl_handshake_to_server(SOCKET s, char * hostname, SSL_CERT *server_cer
 	if ( conn == NULL ){
 		return NULL;
 	}
-
-	conn->ctx = SSL_CTX_new(SSLv23_client_method());
-	if ( conn->ctx == NULL ) {
+	conn->ctx = NULL;
+	conn->ssl = SSL_new(config->srv_ctx);
+	if ( conn->ssl == NULL ) {
 		free(conn);
 		return NULL;
 	}
-
-	conn->ssl = SSL_new(conn->ctx);
-	if ( conn->ssl == NULL ) {
-		SSL_CTX_free(conn->ctx);
-		free(conn);
-		return NULL;
+	if(config->client_verify){
+	    X509_VERIFY_PARAM *param;
+	    
+	    param = SSL_get0_param(conn->ssl);
+	    X509_VERIFY_PARAM_set1_host(param, hostname, strlen(hostname));
 	}
 
 	if(!SSL_set_fd(conn->ssl, s)){
 		ssl_conn_free(conn);
+		*errSSL = ERR_error_string(ERR_get_error(), errbuf);
 		return NULL;
 	}
 	if(hostname && *hostname)SSL_set_tlsext_host_name(conn->ssl, hostname);
@@ -237,8 +234,43 @@ SSL_CONN ssl_handshake_to_server(SOCKET s, char * hostname, SSL_CERT *server_cer
 	return conn;
 }
 
-SSL_CONN ssl_handshake_to_client(SOCKET s, SSL_CERT server_cert, char** errSSL)
-{
+
+SSL_CTX * ssl_cli_ctx(SSL_CONFIG *config, X509 *server_cert, EVP_PKEY *server_key, char** errSSL){
+    SSL_CTX *ctx;
+    int err = 0;
+
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    ctx = SSL_CTX_new(SSLv23_server_method());
+#else
+    ctx = SSL_CTX_new(TLS_server_method());
+#endif
+    if (!ctx) {
+	*errSSL = ERR_error_string(ERR_get_error(), errbuf);
+	return NULL;
+    }
+
+    err = SSL_CTX_use_certificate(ctx, (X509 *) server_cert);
+    if ( err <= 0 ) {
+	*errSSL = ERR_error_string(ERR_get_error(), errbuf);
+	SSL_CTX_free(ctx);
+	return NULL;
+    }
+
+    err = SSL_CTX_use_PrivateKey(ctx, server_key);
+    if ( err <= 0 ) {
+	*errSSL = ERR_error_string(ERR_get_error(), errbuf);
+	SSL_CTX_free(ctx);
+	return NULL;
+    }
+    if(config->server_min_proto_version)SSL_CTX_set_min_proto_version(ctx, config->server_min_proto_version);
+    if(config->server_max_proto_version)SSL_CTX_set_max_proto_version(ctx, config->server_max_proto_version);
+    if(config->server_cipher_list)SSL_CTX_set_cipher_list(ctx, config->server_cipher_list);
+    if(config->server_ciphersuites)SSL_CTX_set_ciphersuites(ctx, config->server_ciphersuites);
+    return ctx;
+}
+
+SSL_CONN ssl_handshake_to_client(SOCKET s, SSL_CONFIG *config, X509 *server_cert, EVP_PKEY *server_key, char** errSSL){
 	int err = 0;
 	X509 *cert;
 	ssl_conn *conn;
@@ -249,43 +281,25 @@ SSL_CONN ssl_handshake_to_client(SOCKET s, SSL_CERT server_cert, char** errSSL)
 	if ( conn == NULL )
 		return NULL;
 
-	conn->ctx = SSL_CTX_new(SSLv23_server_method());
-	if ( conn->ctx == NULL ) {
-		free(conn);
+	conn->ctx = NULL;
+	conn->ssl = NULL;
+	if(!config->cli_ctx){
+	    conn->ctx = ssl_cli_ctx(config, server_cert, server_key, errSSL);
+	    if(!conn->ctx){
+		ssl_conn_free(conn);
 		return NULL;
+	    }
 	}
 
-	err = SSL_CTX_use_certificate(conn->ctx, (X509 *) server_cert);
-	if ( err <= 0 ) {
-		SSL_CTX_free(conn->ctx);
-		free(conn);
-		return NULL;
-	}
-
-	err = SSL_CTX_use_PrivateKey(conn->ctx, server_key);
-	if ( err <= 0 ) {
-		SSL_CTX_free(conn->ctx);
-		free(conn);
-		return NULL;
-	}
-/*
-	err = SSL_CTX_load_verify_locations(conn->ctx, "3proxy.pem",
-                                   NULL);
-	if ( err <= 0 ) {
-		SSL_CTX_free(conn->ctx);
-		free(conn);
-		return NULL;
-	}
-*/
-
-	conn->ssl = SSL_new(conn->ctx);
+	conn->ssl = SSL_new(config->cli_ctx?config->cli_ctx : conn->ctx);
 	if ( conn->ssl == NULL ) {
-		SSL_CTX_free(conn->ctx);
+		*errSSL = ERR_error_string(ERR_get_error(), errbuf);
+		if(conn->ctx)SSL_CTX_free(conn->ctx);
 		free(conn);
 		return NULL;
 	}
 
-	SSL_set_fd(conn->ssl, (int)s);
+	SSL_set_fd(conn->ssl, s);
 	err = SSL_accept(conn->ssl);
 	if ( err <= 0 ) {
 		*errSSL = ERR_error_string(ERR_get_error(), errbuf);
@@ -400,75 +414,17 @@ int thread_cleanup(void)
 
 int ssl_file_init = 0;
 
+int ssl_init_done = 0;
 
-void ssl_init(void)
+void ssl_init()
 {
-	FILE *f;
-	static char fname[200];
-
-	if(!ssl_file_init++)pthread_mutex_init(&ssl_file_mutex, NULL);
-
-	pthread_mutex_lock(&ssl_file_mutex);
-	thread_setup();
-
-	SSLeay_add_ssl_algorithms();
-	SSL_load_error_strings();
-
-	sprintf(fname, "%.128s3proxy.pem", cert_path);
-	f = fopen(fname, "r");
-	if ( f != NULL ) {
-		PEM_read_X509(f, &CA_cert, NULL, NULL);
-		fclose(f);
+	if(!ssl_init_done){
+	    ssl_init_done = 1;
+	    thread_setup();
+	    SSLeay_add_ssl_algorithms();
+	    SSL_load_error_strings();
+	    pthread_mutex_init(&ssl_file_mutex, NULL);
+	    bio_err=BIO_new_fp(stderr,BIO_NOCLOSE);
 	}
-	else {
-		fprintf(stderr, "failed to open: %s\n", fname);
-	}
-	name = X509_get_subject_name(CA_cert);
-
-	sprintf(fname, "%.128s3proxy.key", cert_path);
-	f = fopen(fname, "rb");
-	if ( f != NULL ) {                                             
-		CA_key = PEM_read_PrivateKey(f, &CA_key, NULL, NULL);
-		fclose(f);
-	}
-	else {
-		fprintf(stderr, "failed to open: %s\n", fname);
-	}
-
-	sprintf(fname, "%.128sserver.key", cert_path);
-	f = fopen(fname, "rb");
-	if ( f != NULL ) {
-		server_key = PEM_read_PrivateKey(f, &server_key, NULL, NULL);
-		fclose(f);
-	}
-	else {
-		fprintf(stderr, "failed to open: %s\n", fname);
-	}
-	if(!CA_cert || !CA_key || !server_key){
-		fprintf(stderr, "failed to init SSL certificate / keys\n");
-	}
-
-	bio_err=BIO_new_fp(stderr,BIO_NOCLOSE);
-	pthread_mutex_unlock(&ssl_file_mutex);
 }
 
-void ssl_release(void)
-{
-	pthread_mutex_lock(&ssl_file_mutex);
-	if ( CA_cert != NULL ) {
-		X509_free(CA_cert);
-		CA_cert = NULL;
-	}
-	
-	if ( CA_key != NULL ) {
-		EVP_PKEY_free(CA_key);
-		CA_key = NULL;
-	}
-
-	if ( server_key != NULL ) {
-		EVP_PKEY_free(server_key);
-		server_key = NULL;
-	}
-	thread_cleanup();
-	pthread_mutex_unlock(&ssl_file_mutex);
-}

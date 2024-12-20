@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -16,14 +16,26 @@
 void * tcppmchild(struct clientparam* param) {
  int res;
 
- if(!param->hostname)parsehostname((char *)param->srv->target, param, ntohs(param->srv->targetport));
+ if(!param->hostname && parsehostname((char *)param->srv->target, param, ntohs(param->srv->targetport))) RETURN(100);
  param->operation = CONNECT;
  res = (*param->srv->authfunc)(param);
  if(res) {RETURN(res);}
- RETURN (sockmap(param, conf.timeouts[CONNECTION_L]));
+ if (param->npredatfilters){
+	int action;
+        action = handlepredatflt(param);
+        if(action == HANDLED){
+                RETURN(0);
+        }
+        if(action != PASS) RETURN(19);
+ }
+ if(param->redirectfunc){
+    return (*param->redirectfunc)(param);
+ }
+
+ RETURN (mapsocket(param, conf.timeouts[CONNECTION_L]));
 CLEANRET:
  
- (*param->srv->logfunc)(param, param->hostname);
+ dolog(param, param->hostname);
  freeparam(param);
  return (NULL);
 }

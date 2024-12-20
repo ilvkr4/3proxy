@@ -5,7 +5,23 @@
 *.pydevproject
 .project
 .metadata
-bin/
+*.exe
+*.dll
+*.exp
+*.lib
+*.key
+*.pem
+*.so
+bin/3proxy
+bin/proxy
+bin/socks
+bin/tcppm
+bin/udppm
+bin/pop3p
+bin/smtpp
+bin/ftppr
+bin/mycrypt
+bin/tlspr
 bin64/
 dll/
 tmp/
@@ -18,6 +34,9 @@ tmp/
 *.err
 res
 version.c
+version
+version.sh
+buildlinux.sh
 3proxy.res
 
 src/3proxy
@@ -37,8 +56,7 @@ doc/html/man3/
 doc/html/man8/
 *.var
 verfile.sh
-Makefile
-Changelog
+/Makefile
 copytgz.sh
 *~.nib
 local.properties
@@ -77,7 +95,6 @@ local.properties
 [Rr]elease/
 x64/
 build/
-[Bb]in/
 [Oo]bj/
 
 # MSTest test Results

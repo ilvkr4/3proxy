@@ -1,6 +1,6 @@
 /*
    3APA3A simpliest proxy server
-   (c) 2002-2008 by ZARAZA <3APA3A@security.nnov.ru>
+   (c) 2002-2021 by Vladimir Dubrovin <3proxy@3proxy.org>
 
    please read License Agreement
 
@@ -11,8 +11,8 @@
 unsigned bandlimitfunc(struct clientparam *param, unsigned nbytesin, unsigned nbytesout);
 void trafcountfunc(struct clientparam *param);
 int checkACL(struct clientparam * param);
-void nametohash(const unsigned char * name, unsigned char *hash);
-unsigned hashindex(const unsigned char* hash);
+void nametohash(const unsigned char * name, unsigned char *hash, unsigned char *rnd);
+unsigned hashindex(struct hashtable *ht, const unsigned char* hash);
 void decodeurl(unsigned char *s, int allowcr);
 int parsestr (unsigned char *str, unsigned char **argm, int nitems, unsigned char ** buff, int *inbuf, int *bufsize);
 struct ace * make_ace (int argc, unsigned char ** argv);
@@ -68,16 +68,15 @@ struct symbol symbols[] = {
 	{symbols+41, "admin", (void *) adminchild},
 	{symbols+42, "ftppr", (void *) ftpprchild},
 	{symbols+43, "smtpp", (void *) smtppchild},
-	{symbols+44, "icqpr", (void *) icqprchild},
-/*
-	{symbols+45, "msnpr", (void *) msnprchild},
-*/
-	{symbols+45, "authfuncs", (void *) &authfuncs},
-	{symbols+46, "commandhandlers", (void *) &commandhandlers},
-	{symbols+47, "decodeurl", (void *) decodeurl},
-	{symbols+48, "parsestr", (void *) parsestr},
-	{symbols+49, "make_ace", (void *) make_ace},
-	{symbols+50, "freeacl", (void *) freeacl},
+	{symbols+44, "auto", (void *) smtppchild},
+	{symbols+45, "tlspr", (void *) smtppchild},
+	{symbols+46, "authfuncs", (void *) &authfuncs},
+	{symbols+47, "commandhandlers", (void *) &commandhandlers},
+	{symbols+48, "decodeurl", (void *) decodeurl},
+	{symbols+49, "parsestr", (void *) parsestr},
+	{symbols+50, "make_ace", (void *) make_ace},
+	{symbols+51, "freeacl", (void *) freeacl},
+	{symbols+52, "handleredirect", (void *) handleredirect},
 	{NULL, "", NULL}
 };
 
